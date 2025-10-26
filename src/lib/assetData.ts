@@ -1,5 +1,9 @@
 import { PricePoint, AssetSuggestion } from '../types';
 
+/**
+ * Mappa ISIN -> Ticker usata SOLO come fallback per la generazione
+ * di dati sintetici se la ricerca API fallisce.
+ */
 export const ISIN_TO_TICKER: Record<string, string> = {
   'US0378331005': 'AAPL',
   'US5949181045': 'MSFT',
@@ -24,27 +28,19 @@ export const ISIN_TO_TICKER: Record<string, string> = {
   'DE000BASF111': 'BAS.DE',
   'JP3435000009': 'SONY',
   'CH0038863350': 'NESN.SW',
-
-  // Materie prime
   'US78463V1070': 'GLD',   
   'US78464Y4090': 'SLV',   
   'US912810FH35': 'USO',   
   'US912810JA50': 'UNG',   
   'US4642882799': 'DBC',  
-
-  // Crypto (simboli tipici sugli exchange principali)
   'CRYPTO:BTC': 'BTC',     
   'CRYPTO:ETH': 'ETH',
-  'CRYPTO:BNB': 'BNB',
-  'CRYPTO:ADA': 'ADA',
-  'CRYPTO:XRP': 'XRP',
-  'CRYPTO:DOGE': 'DOGE',
-  'CRYPTO:MATIC': 'MATIC',
-  'CRYPTO:SOL': 'SOL',
-  'CRYPTO:LTC': 'LTC',
-  'CRYPTO:DOT': 'DOT'
 };
 
+/**
+ * Database di parametri (Ritorno/Volatilità) usato SOLO come fallback
+ * per la generazione di dati sintetici.
+ */
 export const ASSET_DATABASE: Record<string, { name: string; annualReturn: number; volatility: number; currency: string }> = {
   // Azioni
   'AAPL': { name: 'Apple Inc.', annualReturn: 0.20, volatility: 0.30, currency: 'USD' },
@@ -77,15 +73,12 @@ export const ASSET_DATABASE: Record<string, { name: string; annualReturn: number
   'BTC': { name: 'Bitcoin', annualReturn: 0.80, volatility: 0.90, currency: 'USD' },
   'ETH': { name: 'Ethereum', annualReturn: 0.75, volatility: 0.85, currency: 'USD' },
   'BNB': { name: 'Binance Coin', annualReturn: 0.60, volatility: 0.80, currency: 'USD' },
-  'ADA': { name: 'Cardano', annualReturn: 0.55, volatility: 0.75, currency: 'USD' },
-  'XRP': { name: 'Ripple', annualReturn: 0.50, volatility: 0.70, currency: 'USD' },
-  'DOGE': { name: 'Dogecoin', annualReturn: 0.45, volatility: 0.85, currency: 'USD' },
-  'MATIC': { name: 'Polygon', annualReturn: 0.50, volatility: 0.75, currency: 'USD' },
-  'SOL': { name: 'Solana', annualReturn: 0.55, volatility: 0.80, currency: 'USD' },
-  'LTC': { name: 'Litecoin', annualReturn: 0.40, volatility: 0.70, currency: 'USD' },
-  'DOT': { name: 'Polkadot', annualReturn: 0.50, volatility: 0.75, currency: 'USD' }
 };
 
+/**
+ * Tassi di cambio (statici) per la conversione in EUR.
+ * In un'app di produzione, anche questi dovrebbero essere recuperati via API.
+ */
 export const EXCHANGE_RATES: Record<string, { symbol: string; rateToEUR: number }> = {
   USD: { symbol: '$', rateToEUR: 0.92 },
   EUR: { symbol: '€', rateToEUR: 1 },
@@ -102,24 +95,13 @@ export const EXCHANGE_RATES: Record<string, { symbol: string; rateToEUR: number 
   HKD: { symbol: 'HK$', rateToEUR: 0.12 }
 };
 
-export const ASSET_DATABASE: Record<string, { name: string; annualReturn: number; volatility: number; currency: string }> = {
-  'AAPL': { name: 'Apple Inc.', annualReturn: 0.20, volatility: 0.30, currency: 'USD' },
-  'MSFT': { name: 'Microsoft Corp.', annualReturn: 0.18, volatility: 0.25, currency: 'USD' },
-  // ... (rimane per generateSyntheticPrices)
-};
-
-export const EXCHANGE_RATES: Record<string, { symbol: string; rateToEUR: number }> = {
-  USD: { symbol: '$', rateToEUR: 0.92 },
-  EUR: { symbol: '€', rateToEUR: 1 },
-  // ...
-};
-
-// --- NUOVA FUNZIONE DI RICERCA API ---
+/**
+ * Cerca asset (Ticker, ISIN, Nome) utilizzando l'API EODHD.
+ * Richiede la chiave VITE_EODHD_API_KEY nel file .env.local
+ */
 export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
   if (!query || query.length < 2) return [];
 
-  // Chiave API EODHD (https://eodhistoricaldata.com/)
-  // Aggiungere VITE_EODHD_API_KEY al file .env.local
   const API_KEY = import.meta.env.VITE_EODHD_API_KEY || 'demo';
   const url = `https://eodhistoricaldata.com/api/search/${encodeURIComponent(query)}?api_token=${API_KEY}&fmt=json`;
 
@@ -135,14 +117,19 @@ export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
     }
 
     // Mappatura Ticker EODHD -> Alpha Vantage
-    // EODHD: { "Code": "ENI", "Exchange": "MI" }
-    // Alpha Vantage: "ENI.MI"
+    // EODHD: { "Code": "ENI", "Exchange": "MI" } -> Alpha Vantage: "ENI.MI"
     const suggestions: AssetSuggestion[] = results.map((item: any) => {
       let ticker = item.Code;
       
+      // Aggiunge il suffisso per borse non USA
       if (item.Exchange && item.Exchange !== 'US' && item.Exchange !== 'CRYPTO') {
          const exchangeSuffix: Record<string, string> = {
-            'MI': '.MI', 'AS': '.AS', 'L': '.L', 'DE': '.DE', 'PA': '.PA', 'SW': '.SW'
+            'MI': '.MI', // Milano
+            'AS': '.AS', // Amsterdam
+            'L': '.L',  // Londra
+            'DE': '.DE', // XETRA
+            'PA': '.PA', // Parigi
+            'SW': '.SW'  // Svizzera
          };
          ticker = `${item.Code}${exchangeSuffix[item.Exchange] || ('.' + item.Exchange)}`;
       }
@@ -151,6 +138,7 @@ export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
         ticker = item.Code;
       }
       
+      // Gestisce i ticker Crypto (anche se Alpha Vantage li gestisce diversamente)
       if (item.Exchange === 'CRYPTO') {
         ticker = `CRYPTO:${item.Code}`;
       }
@@ -163,7 +151,7 @@ export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
       };
     });
 
-    // Filtra duplicati
+    // Filtra duplicati (es. stessa azienda su borse diverse)
     const uniqueTickers = new Set<string>();
     const uniqueSuggestions = suggestions.filter(s => {
       if (uniqueTickers.has(s.ticker)) return false;
@@ -175,19 +163,43 @@ export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
 
   } catch (e) {
     console.error(`Ricerca asset fallita: ${(e as Error).message}`);
-    return []; 
+    return []; // Restituisce array vuoto in caso di errore
   }
 }
 
-// ... (gaussianRandom, formatDate) ...
+// --- Funzioni per dati storici (API Alpha Vantage e Fallback Sintetico) ---
 
-// --- FUNZIONI AGGIORNATE PER ACCETTARE LA VALUTA ---
+/**
+ * Genera un numero casuale da una distribuzione normale (metodo Box-Muller).
+ * Usato solo per i dati sintetici.
+ */
+function gaussianRandom(): number {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
 
+/**
+ * Formatta un oggetto Date in 'YYYY-MM-DD'.
+ */
+function formatDate(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * FALLBACK: Genera una serie di prezzi sintetici (Geometric Brownian Motion).
+ * Usato solo se l'API Alpha Vantage fallisce.
+ */
 export function generateSyntheticPrices(ticker: string, days: number = 365 * 3, currency: string = 'USD'): PricePoint[] {
+  // Cerca i parametri nel database statico di fallback
   const assetParams = ASSET_DATABASE[ticker] || { annualReturn: 0.08, volatility: 0.18 };
   const mu = assetParams.annualReturn;
   const sigma = assetParams.volatility;
-  const dt = 1 / 252;
+  const dt = 1 / 252; // Giorni di trading
   const startPrice = 100;
   const prices: PricePoint[] = [];
   let price = startPrice;
@@ -198,8 +210,8 @@ export function generateSyntheticPrices(ticker: string, days: number = 365 * 3, 
   for (let i = 0; i <= days; i++) {
     const t = new Date(startDate.getTime());
     t.setDate(startDate.getDate() + i);
-    const day = t.getDay();
-    if (day === 0 || day === 6) continue;
+    const day = t.getDay(); // 0 = Domenica, 6 = Sabato
+    if (day === 0 || day === 6) continue; // Salta i weekend
 
     const z = gaussianRandom();
     const drift = (mu - 0.5 * sigma * sigma) * dt;
@@ -212,13 +224,17 @@ export function generateSyntheticPrices(ticker: string, days: number = 365 * 3, 
     });
   }
 
-  if (prices.length < 400) {
+  // Assicura che ci siano abbastanza dati (almeno ~400 giorni di trading per 2 anni)
+  if (prices.length < 400 && days < 365 * 10) {
     return generateSyntheticPrices(ticker, days * 2, currency);
   }
 
   return prices;
 }
 
+/**
+ * Esegue il parsing della risposta JSON da Alpha Vantage.
+ */
 function parseAlphaVantageData(data: any, currency: string): PricePoint[] {
   const timeSeries = data['Time Series (Daily)'];
   if (!timeSeries) {
@@ -234,22 +250,35 @@ function parseAlphaVantageData(data: any, currency: string): PricePoint[] {
   for (const date in timeSeries) {
     prices.push({
       date: date,
+      // '5. adjusted close' tiene conto di dividendi e split
       close: Number(timeSeries[date]['5. adjusted close']),
-      currency: currency // Usa la valuta passata
+      currency: currency // Usa la valuta fornita (l'API non la restituisce)
     });
   }
   
+  // Ordina dal più vecchio al più recente
   prices.sort((a, b) => a.date.localeCompare(b.date));
   return prices;
 }
 
+/**
+ * Scarica i dati storici dei prezzi da Alpha Vantage.
+ * Richiede la chiave VITE_ALPHA_VANTAGE_KEY nel file .env.local
+ * Esegue il fallback a `generateSyntheticPrices` in caso di errore.
+ */
 export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, currency: string = 'USD'): Promise<PricePoint[]> {
+  
   const API_KEY = import.meta.env.VITE_ALPHA_VANTAGE_KEY || 'DEMO';
+  
+  // 'full' restituisce 20+ anni, 'compact' solo 100 giorni.
   const outputSize = (days > 100) ? 'full' : 'compact';
   
   let apiTicker = ticker;
+  // L'API TIME_SERIES_DAILY non gestisce il prefisso CRYPTO:
   if (ticker.startsWith('CRYPTO:')) {
      apiTicker = ticker.split(':')[1];
+     // Per le crypto, Alpha Vantage richiede una funzione diversa (es. DIGITAL_CURRENCY_DAILY)
+     // Per semplicità, usiamo i dati sintetici per le crypto.
      console.warn(`Ticker Crypto ${ticker} non supportato da TIME_SERIES_DAILY, uso dati sintetici.`);
      return generateSyntheticPrices(ticker, days, currency);
   }
@@ -264,6 +293,7 @@ export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, 
     
     const json = await res.json();
     
+    // Gestione del limite API (5 chiamate/minuto sul piano gratuito)
     if (json.Note) {
       console.warn(`Limite API Alpha Vantage raggiunto (o chiave DEMO): ${json.Note}`);
       throw new Error('Limite API Alpha Vantage raggiunto.');
@@ -280,23 +310,7 @@ export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, 
 
   } catch (e) {
     console.warn(`fetchPriceHistory(${ticker}) fallito, ripiego su dati sintetici. Errore: ${(e as Error).message}`);
+    // Fallback ai dati sintetici
     return generateSyntheticPrices(ticker, days, currency);
   }
 }
-
-//export async function fetchPriceHistory(ticker: string, days: number = 365 * 5): Promise<PricePoint[]> {
-//  try {
-//    const url = `/api/prices?ticker=${encodeURIComponent(ticker)}&days=${days}`;
-//    const res = await fetch(url, { cache: 'no-store' });
-//    if (!res.ok) throw new Error(`Server returned ${res.status}`);
-//   const json = await res.json();
-//    if (!Array.isArray(json) || json.length === 0 || !json[0].date) {
-//      throw new Error('Invalid data shape from /api/prices');
-//    }
-//    json.sort((a, b) => a.date.localeCompare(b.date));
-//    return json;
-//  } catch (e) {
-//    console.warn(`fetchPriceHistory(${ticker}) failed, using synthetic data`);
-//    return generateSyntheticPrices(ticker, days);
-//  }
-//}
