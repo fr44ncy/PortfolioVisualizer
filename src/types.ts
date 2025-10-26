@@ -3,12 +3,13 @@ export interface Asset {
   ticker: string;
   isin?: string;
   weight: number;
+  currency: string; // Aggiunto
 }
 
 export interface Portfolio {
   id?: string;
   name: string;
-  currency: string;
+  currency: string; // Valuta base del portfolio
   initial_capital: number;
   assets: Asset[];
 }
@@ -37,4 +38,5 @@ export interface AssetSuggestion {
   ticker: string;
   isin?: string;
   name: string;
+  currency: string; // Aggiunto
 }
