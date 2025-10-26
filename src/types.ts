@@ -38,5 +38,5 @@ export interface AssetSuggestion {
   ticker: string;
   isin?: string;
   name: string;
-  currency: string; // Aggiunto
+  currency: string; 
 }
