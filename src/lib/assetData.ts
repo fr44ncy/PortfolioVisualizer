@@ -102,56 +102,91 @@ export const EXCHANGE_RATES: Record<string, { symbol: string; rateToEUR: number 
   HKD: { symbol: 'HK$', rateToEUR: 0.12 }
 };
 
-export function searchAssets(query: string): AssetSuggestion[] {
-  if (!query || query.length < 1) return [];
+export const ASSET_DATABASE: Record<string, { name: string; annualReturn: number; volatility: number; currency: string }> = {
+  'AAPL': { name: 'Apple Inc.', annualReturn: 0.20, volatility: 0.30, currency: 'USD' },
+  'MSFT': { name: 'Microsoft Corp.', annualReturn: 0.18, volatility: 0.25, currency: 'USD' },
+  // ... (rimane per generateSyntheticPrices)
+};
 
-  const upperQuery = query.toUpperCase();
-  const results: AssetSuggestion[] = [];
+export const EXCHANGE_RATES: Record<string, { symbol: string; rateToEUR: number }> = {
+  USD: { symbol: '$', rateToEUR: 0.92 },
+  EUR: { symbol: '€', rateToEUR: 1 },
+  // ...
+};
 
-  if (ISIN_TO_TICKER[upperQuery]) {
-    const ticker = ISIN_TO_TICKER[upperQuery];
-    const asset = ASSET_DATABASE[ticker];
-    if (asset) {
-      results.push({
-        ticker,
-        isin: upperQuery,
-        name: asset.name
-      });
+// --- NUOVA FUNZIONE DI RICERCA API ---
+export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
+  if (!query || query.length < 2) return [];
+
+  // Chiave API EODHD (https://eodhistoricaldata.com/)
+  // Aggiungere VITE_EODHD_API_KEY al file .env.local
+  const API_KEY = import.meta.env.VITE_EODHD_API_KEY || 'demo';
+  const url = `https://eodhistoricaldata.com/api/search/${encodeURIComponent(query)}?api_token=${API_KEY}&fmt=json`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`Errore API EODHD: ${res.status}`);
     }
-  }
+    const results = await res.json();
 
-  for (const [ticker, asset] of Object.entries(ASSET_DATABASE)) {
-    if (ticker.toUpperCase().includes(upperQuery)) {
-      const isin = Object.entries(ISIN_TO_TICKER).find(([_, t]) => t === ticker)?.[0];
-      results.push({
-        ticker,
-        isin,
-        name: asset.name
-      });
+    if (!Array.isArray(results)) {
+      return [];
     }
+
+    // Mappatura Ticker EODHD -> Alpha Vantage
+    // EODHD: { "Code": "ENI", "Exchange": "MI" }
+    // Alpha Vantage: "ENI.MI"
+    const suggestions: AssetSuggestion[] = results.map((item: any) => {
+      let ticker = item.Code;
+      
+      if (item.Exchange && item.Exchange !== 'US' && item.Exchange !== 'CRYPTO') {
+         const exchangeSuffix: Record<string, string> = {
+            'MI': '.MI', 'AS': '.AS', 'L': '.L', 'DE': '.DE', 'PA': '.PA', 'SW': '.SW'
+         };
+         ticker = `${item.Code}${exchangeSuffix[item.Exchange] || ('.' + item.Exchange)}`;
+      }
+      
+      if (item.Exchange === 'US') {
+        ticker = item.Code;
+      }
+      
+      if (item.Exchange === 'CRYPTO') {
+        ticker = `CRYPTO:${item.Code}`;
+      }
+
+      return {
+        ticker: ticker,
+        isin: item.ISIN || undefined,
+        name: item.Name,
+        currency: item.Currency || 'USD'
+      };
+    });
+
+    // Filtra duplicati
+    const uniqueTickers = new Set<string>();
+    const uniqueSuggestions = suggestions.filter(s => {
+      if (uniqueTickers.has(s.ticker)) return false;
+      uniqueTickers.add(s.ticker);
+      return true;
+    });
+
+    return uniqueSuggestions.slice(0, 7); // Limita a 7 risultati
+
+  } catch (e) {
+    console.error(`Ricerca asset fallita: ${(e as Error).message}`);
+    return []; 
   }
-
-  return results.slice(0, 5);
 }
 
-function gaussianRandom(): number {
-  let u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-}
+// ... (gaussianRandom, formatDate) ...
 
-function formatDate(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
+// --- FUNZIONI AGGIORNATE PER ACCETTARE LA VALUTA ---
 
-export function generateSyntheticPrices(ticker: string, days: number = 365 * 3): PricePoint[] {
-  const asset = ASSET_DATABASE[ticker] || { annualReturn: 0.08, volatility: 0.18, currency: 'USD' };
-  const mu = asset.annualReturn;
-  const sigma = asset.volatility;
+export function generateSyntheticPrices(ticker: string, days: number = 365 * 3, currency: string = 'USD'): PricePoint[] {
+  const assetParams = ASSET_DATABASE[ticker] || { annualReturn: 0.08, volatility: 0.18 };
+  const mu = assetParams.annualReturn;
+  const sigma = assetParams.volatility;
   const dt = 1 / 252;
   const startPrice = 100;
   const prices: PricePoint[] = [];
@@ -173,69 +208,50 @@ export function generateSyntheticPrices(ticker: string, days: number = 365 * 3):
     prices.push({
       date: formatDate(t),
       close: Number(price.toFixed(4)),
-      currency: asset.currency || 'USD'
+      currency: currency // Usa la valuta passata
     });
   }
 
   if (prices.length < 400) {
-    return generateSyntheticPrices(ticker, days * 2);
+    return generateSyntheticPrices(ticker, days * 2, currency);
   }
 
   return prices;
 }
 
-// Funzione helper per parsare la risposta di Alpha Vantage
-function parseAlphaVantageData(data: any, ticker: string): PricePoint[] {
+function parseAlphaVantageData(data: any, currency: string): PricePoint[] {
   const timeSeries = data['Time Series (Daily)'];
   if (!timeSeries) {
     console.error('Dati non trovati nella risposta di Alpha Vantage:', data);
-    // La demo key o una chiamata errata possono restituire una nota informativa invece dei dati
     if (data.Note) {
       console.warn(`Nota da Alpha Vantage (probabilmente limite API): ${data.Note}`);
     }
     throw new Error('Formato dati API non valido: "Time Series (Daily)" mancante.');
   }
 
-  const asset = ASSET_DATABASE[ticker] || { currency: 'USD' };
   const prices: PricePoint[] = [];
 
   for (const date in timeSeries) {
     prices.push({
       date: date,
-      // Usiamo '5. adjusted close' per tenere conto di dividendi e split
       close: Number(timeSeries[date]['5. adjusted close']),
-      currency: asset.currency
+      currency: currency // Usa la valuta passata
     });
   }
-
-  // L'API restituisce i dati in ordine cronologico inverso (dal più recente al più vecchio)
-  // Dobbiamo invertirli per il calcolo del NAV
-  prices.sort((a, b) => a.date.localeCompare(b.date));
   
+  prices.sort((a, b) => a.date.localeCompare(b.date));
   return prices;
 }
 
-export async function fetchPriceHistory(ticker: string, days: number = 365 * 5): Promise<PricePoint[]> {
-  // Ottieni la tua API key gratuita da https://www.alphavantage.co/support/#api-key
-  // e aggiungila al tuo file .env.local (o .env) come VITE_ALPHA_VANTAGE_KEY
+export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, currency: string = 'USD'): Promise<PricePoint[]> {
   const API_KEY = import.meta.env.VITE_ALPHA_VANTAGE_KEY || 'DEMO';
-  
-  // Se i giorni sono > 365*2 (circa), usiamo 'outputsize=full' (ultimi 20+ anni)
-  // Altrimenti 'compact' (ultimi 100 giorni) non è sufficiente.
-  // Per il backtest usiamo sempre 'full' se i dati richiesti superano i 100 giorni,
-  // anche se 'days' non è direttamente usato dall'API (ma influenza la simulazione).
-  // Per 5 anni di dati (circa 1260 giorni di trading), 'full' è necessario.
   const outputSize = (days > 100) ? 'full' : 'compact';
-
-  // Per asset non USA (es. 'ENI.MI', 'IWDA.AS'), Alpha Vantage spesso li gestisce.
-  // Per crypto, l'API è diversa (es. DIGITAL_CURRENCY_DAILY), questa funzione
-  // gestisce solo azioni/ETF.
+  
   let apiTicker = ticker;
   if (ticker.startsWith('CRYPTO:')) {
      apiTicker = ticker.split(':')[1];
-     // Qui dovresti implementare una chiamata a DIGITAL_CURRENCY_DAILY se necessario
-     console.warn(`Ticker Crypto ${ticker} non supportato, uso dati sintetici.`);
-     return generateSyntheticPrices(ticker, days);
+     console.warn(`Ticker Crypto ${ticker} non supportato da TIME_SERIES_DAILY, uso dati sintetici.`);
+     return generateSyntheticPrices(ticker, days, currency);
   }
 
   const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${apiTicker}&outputsize=${outputSize}&apikey=${API_KEY}`;
@@ -248,13 +264,12 @@ export async function fetchPriceHistory(ticker: string, days: number = 365 * 5):
     
     const json = await res.json();
     
-    // Gestione del limite API (il piano gratuito è limitato)
     if (json.Note) {
       console.warn(`Limite API Alpha Vantage raggiunto (o chiave DEMO): ${json.Note}`);
       throw new Error('Limite API Alpha Vantage raggiunto.');
     }
 
-    const priceData = parseAlphaVantageData(json, ticker);
+    const priceData = parseAlphaVantageData(json, currency);
     
     if (priceData.length === 0) {
       throw new Error('Nessun dato parsato da Alpha Vantage.');
@@ -265,8 +280,7 @@ export async function fetchPriceHistory(ticker: string, days: number = 365 * 5):
 
   } catch (e) {
     console.warn(`fetchPriceHistory(${ticker}) fallito, ripiego su dati sintetici. Errore: ${(e as Error).message}`);
-    // Fallback ai dati sintetici se l'API fallisce
-    return generateSyntheticPrices(ticker, days);
+    return generateSyntheticPrices(ticker, days, currency);
   }
 }
 
