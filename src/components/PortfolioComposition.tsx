@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { Trash2, Plus } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { Asset } from '../types';
 import AssetSearch from './AssetSearch';
 
 interface PortfolioCompositionProps {
   assets: Asset[];
-  onAddAsset: (ticker: string, isin: string | undefined, weight: number) => void;
+  onAddAsset: (ticker: string, isin: string | undefined, weight: number, currency: string) => void;
   onRemoveAsset: (id: string) => void;
   onUpdateWeight: (id: string, weight: number) => void;
 }
@@ -21,8 +21,8 @@ export default function PortfolioComposition({
   const totalWeight = assets.reduce((sum, a) => sum + a.weight, 0);
   const isBalanced = Math.abs(totalWeight - 100) < 0.01;
 
-  const handleSelect = (ticker: string, isin?: string) => {
-    onAddAsset(ticker, isin, weight);
+  const handleSelect = (ticker: string, isin: string | undefined, currency: string) => {
+    onAddAsset(ticker, isin, weight, currency);
     setWeight(10);
   };
 
@@ -60,9 +60,10 @@ export default function PortfolioComposition({
               >
                 <div className="flex-1">
                   <div className="font-medium text-sm text-gray-900">{asset.ticker}</div>
-                  {asset.isin && (
-                    <div className="text-xs text-gray-500 font-mono">{asset.isin}</div>
-                  )}
+                  {/* Mostra ISIN (se esiste) e Valuta */}
+                  <div className="text-xs text-gray-500">
+                    {asset.isin ? `${asset.isin} · ${asset.currency}` : asset.currency}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-3">
