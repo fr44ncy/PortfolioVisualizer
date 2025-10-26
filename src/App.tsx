@@ -30,12 +30,13 @@ export default function App() {
   const [histogramData, setHistogramData] = useState<{ bin: string; count: number }[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const handleAddAsset = (ticker: string, isin: string | undefined, weight: number) => {
+  const handleAddAsset = (ticker: string, isin: string | undefined, weight: number, currency: string) => {
     const newAsset: Asset = {
       id: uid(),
       ticker,
       isin,
-      weight: Math.max(0, Math.min(100, weight))
+      weight: Math.max(0, Math.min(100, weight)),
+      currency: currency // Salva la valuta
     };
     setAssets(prev => [...prev, newAsset]);
   };
@@ -74,7 +75,8 @@ export default function App() {
           if (!t) continue;
           if (!priceData[t]) {
             promises.push(
-              fetchPriceHistory(t).then(pd => {
+              // Passa la valuta a fetchPriceHistory
+              fetchPriceHistory(t, 365 * 5, asset.currency).then(pd => {
                 setPriceData(old => ({ ...old, [t]: pd }));
               })
             );
@@ -98,8 +100,9 @@ export default function App() {
       }
     }
 
-    recalculate();
-  }, [assets, priceData, initialCapital]);
+    // Nota: priceData non è più una dipendenza per evitare loop
+    // L'effetto si attiva solo quando cambiano gli asset o il capitale
+  }, [assets, initialCapital]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -243,7 +246,7 @@ export default function App() {
         </div>
 
         <footer className="mt-8 text-center text-xs text-gray-500">
-          Portfolio backtesting with synthetic data. For real market data, integrate with a financial API provider.
+          Portfolio backtesting data provided by Alpha Vantage & EOD Historical Data.
         </footer>
       </main>
     </div>
