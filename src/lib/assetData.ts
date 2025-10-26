@@ -184,19 +184,105 @@ export function generateSyntheticPrices(ticker: string, days: number = 365 * 3):
   return prices;
 }
 
-export async function fetchPriceHistory(ticker: string, days: number = 365 * 5): Promise<PricePoint[]> {
-  try {
-    const url = `/api/prices?ticker=${encodeURIComponent(ticker)}&days=${days}`;
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`Server returned ${res.status}`);
-    const json = await res.json();
-    if (!Array.isArray(json) || json.length === 0 || !json[0].date) {
-      throw new Error('Invalid data shape from /api/prices');
+// Funzione helper per parsare la risposta di Alpha Vantage
+function parseAlphaVantageData(data: any, ticker: string): PricePoint[] {
+  const timeSeries = data['Time Series (Daily)'];
+  if (!timeSeries) {
+    console.error('Dati non trovati nella risposta di Alpha Vantage:', data);
+    // La demo key o una chiamata errata possono restituire una nota informativa invece dei dati
+    if (data.Note) {
+      console.warn(`Nota da Alpha Vantage (probabilmente limite API): ${data.Note}`);
     }
-    json.sort((a, b) => a.date.localeCompare(b.date));
-    return json;
+    throw new Error('Formato dati API non valido: "Time Series (Daily)" mancante.');
+  }
+
+  const asset = ASSET_DATABASE[ticker] || { currency: 'USD' };
+  const prices: PricePoint[] = [];
+
+  for (const date in timeSeries) {
+    prices.push({
+      date: date,
+      // Usiamo '5. adjusted close' per tenere conto di dividendi e split
+      close: Number(timeSeries[date]['5. adjusted close']),
+      currency: asset.currency
+    });
+  }
+
+  // L'API restituisce i dati in ordine cronologico inverso (dal più recente al più vecchio)
+  // Dobbiamo invertirli per il calcolo del NAV
+  prices.sort((a, b) => a.date.localeCompare(b.date));
+  
+  return prices;
+}
+
+export async function fetchPriceHistory(ticker: string, days: number = 365 * 5): Promise<PricePoint[]> {
+  // Ottieni la tua API key gratuita da https://www.alphavantage.co/support/#api-key
+  // e aggiungila al tuo file .env.local (o .env) come VITE_ALPHA_VANTAGE_KEY
+  const API_KEY = import.meta.env.VITE_ALPHA_VANTAGE_KEY || 'DEMO';
+  
+  // Se i giorni sono > 365*2 (circa), usiamo 'outputsize=full' (ultimi 20+ anni)
+  // Altrimenti 'compact' (ultimi 100 giorni) non è sufficiente.
+  // Per il backtest usiamo sempre 'full' se i dati richiesti superano i 100 giorni,
+  // anche se 'days' non è direttamente usato dall'API (ma influenza la simulazione).
+  // Per 5 anni di dati (circa 1260 giorni di trading), 'full' è necessario.
+  const outputSize = (days > 100) ? 'full' : 'compact';
+
+  // Per asset non USA (es. 'ENI.MI', 'IWDA.AS'), Alpha Vantage spesso li gestisce.
+  // Per crypto, l'API è diversa (es. DIGITAL_CURRENCY_DAILY), questa funzione
+  // gestisce solo azioni/ETF.
+  let apiTicker = ticker;
+  if (ticker.startsWith('CRYPTO:')) {
+     apiTicker = ticker.split(':')[1];
+     // Qui dovresti implementare una chiamata a DIGITAL_CURRENCY_DAILY se necessario
+     console.warn(`Ticker Crypto ${ticker} non supportato, uso dati sintetici.`);
+     return generateSyntheticPrices(ticker, days);
+  }
+
+  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${apiTicker}&outputsize=${outputSize}&apikey=${API_KEY}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`Errore server Alpha Vantage: ${res.status}`);
+    }
+    
+    const json = await res.json();
+    
+    // Gestione del limite API (il piano gratuito è limitato)
+    if (json.Note) {
+      console.warn(`Limite API Alpha Vantage raggiunto (o chiave DEMO): ${json.Note}`);
+      throw new Error('Limite API Alpha Vantage raggiunto.');
+    }
+
+    const priceData = parseAlphaVantageData(json, ticker);
+    
+    if (priceData.length === 0) {
+      throw new Error('Nessun dato parsato da Alpha Vantage.');
+    }
+
+    console.log(`Dati reali caricati per ${ticker} da Alpha Vantage.`);
+    return priceData;
+
   } catch (e) {
-    console.warn(`fetchPriceHistory(${ticker}) failed, using synthetic data`);
+    console.warn(`fetchPriceHistory(${ticker}) fallito, ripiego su dati sintetici. Errore: ${(e as Error).message}`);
+    // Fallback ai dati sintetici se l'API fallisce
     return generateSyntheticPrices(ticker, days);
   }
 }
+
+//export async function fetchPriceHistory(ticker: string, days: number = 365 * 5): Promise<PricePoint[]> {
+//  try {
+//    const url = `/api/prices?ticker=${encodeURIComponent(ticker)}&days=${days}`;
+//    const res = await fetch(url, { cache: 'no-store' });
+//    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+//   const json = await res.json();
+//    if (!Array.isArray(json) || json.length === 0 || !json[0].date) {
+//      throw new Error('Invalid data shape from /api/prices');
+//    }
+//    json.sort((a, b) => a.date.localeCompare(b.date));
+//    return json;
+//  } catch (e) {
+//    console.warn(`fetchPriceHistory(${ticker}) failed, using synthetic data`);
+//    return generateSyntheticPrices(ticker, days);
+//  }
+//}
