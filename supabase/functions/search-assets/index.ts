@@ -15,8 +15,8 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const url = new URL(req.url);
-    const query = url.searchParams.get("query");
+    // *** CORREZIONE: Leggi i dati dal body JSON (inviato come POST) ***
+    const { query } = await req.json();
 
     if (!query || query.length < 2) {
       return new Response(
