@@ -103,14 +103,12 @@ export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
   if (!query || query.length < 2) return [];
 
   try {
-    // *** MODIFICA: Usa supabase.functions.invoke() ***
-    // Questo invia automaticamente le intestazioni di autenticazione (anon key)
+    // *** CORREZIONE: Invia i dati nel 'body' della richiesta POST ***
     const { data, error } = await supabase.functions.invoke('search-assets', {
-      queryStringParameters: { query }
+      body: { query }
     });
 
     if (error) {
-      // L'errore 401 che vedevi ora sarà gestito qui
       throw new Error(`Errore Edge Function: ${error.message}`);
     }
 
@@ -118,7 +116,7 @@ export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
       return [];
     }
 
-    return data; // 'data' è già il risultato JSON
+    return data;
 
   } catch (e) {
     console.error(`Ricerca asset fallita: ${(e as Error).message}`);
@@ -203,14 +201,13 @@ export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, 
   }
 
   try {
-    // *** MODIFICA: Usa supabase.functions.invoke() ***
+    // *** CORREZIONE: Invia i dati nel 'body' della richiesta POST ***
     const { data, error } = await supabase.functions.invoke('fetch-prices', {
-      queryStringParameters: { ticker, currency }
+      body: { ticker, currency }
     });
 
     if (error) {
-      // Gestisce il rate limit (status 429) o altri errori
-      const errorMessage = error.message.toLowerCase();
+      const errorMessage = (error.message || '').toLowerCase();
       if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
         throw new Error('API rate limit reached');
       }
