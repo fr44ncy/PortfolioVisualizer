@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp } from 'lucide-react';
+import { TrendingUp, AlertTriangle } from 'lucide-react'; // Aggiunto AlertTriangle
 import { Asset, NavPoint, PricePoint, PortfolioMetrics } from './types';
 import PortfolioComposition from './components/PortfolioComposition';
 import PortfolioChart from './components/PortfolioChart';
@@ -31,6 +31,8 @@ export default function App() {
   const [metrics, setMetrics] = useState<PortfolioMetrics>(emptyMetrics);
   const [histogramData, setHistogramData] = useState<{ bin: string; count: number }[]>([]);
   const [loading, setLoading] = useState(false);
+  // *** NUOVO STATO per tracciare l'uso di dati sintetici ***
+  const [usingSyntheticData, setUsingSyntheticData] = useState<boolean | null>(null);
 
   const handleAddAsset = (ticker: string, isin: string | undefined, weight: number, currency: string) => {
     const newAsset: Asset = {
@@ -38,7 +40,7 @@ export default function App() {
       ticker,
       isin,
       weight: Math.max(0, Math.min(100, weight)),
-      currency: currency // Salva la valuta
+      currency: currency
     };
     setAssets(prev => [...prev, newAsset]);
   };
@@ -53,58 +55,78 @@ export default function App() {
     );
   };
 
-  // *** CORREZIONE: LOGICA useEffect COMPLETAMENTE RISCRITTA ***
   useEffect(() => {
     async function recalculate() {
       if (assets.length === 0) {
         setNavSeries([]);
         setMetrics(emptyMetrics);
         setHistogramData([]);
+        setUsingSyntheticData(null); // Resetta lo stato
         return;
       }
 
       setLoading(true);
+      // Resetta lo stato sintetico all'inizio di ogni ricalcolo
+      let didUseSynthetic = false;
       try {
-        // 1. Inizia con i dati già presenti nello stato
         const newPriceData = { ...priceData };
-        
-        // 2. Prepara un array di promesse solo per i ticker MANCANTI
-        const promises: Promise<{ ticker: string, data: PricePoint[] }>[] = [];
-        
+        // Tipo modificato per accogliere l'oggetto restituito da fetchPriceHistory
+        const promises: Promise<{ ticker: string, result: { data: PricePoint[], isSynthetic: boolean } }>[] = [];
+
         for (const asset of assets) {
           const t = asset.ticker;
           if (!t) continue;
-          
-          // Se non abbiamo i dati per questo ticker, avvia il fetch
+
           if (!newPriceData[t]) {
             promises.push(
-              fetchPriceHistory(t, 365 * 5, asset.currency).then(pd => {
-                // La promessa ritorna un oggetto con ticker e dati
-                return { ticker: t, data: pd };
+              fetchPriceHistory(t, 365 * 5, asset.currency).then(res => {
+                // Ritorna ticker e l'intero oggetto risultato
+                return { ticker: t, result: res };
               })
             );
+          } else {
+             // Se i dati sono già in cache, assumiamo (per ora) che non siano sintetici
+             // Potremmo voler memorizzare lo stato isSynthetic anche nella cache in futuro
           }
         }
-        
-        // 3. Aspetta che TUTTE le nuove richieste API siano completate
+
         const results = await Promise.all(promises);
 
-        // 4. Aggiungi i nuovi dati all'oggetto newPriceData
         results.forEach(result => {
-          if (result.data && result.data.length > 0) {
-            newPriceData[result.ticker] = result.data;
+          if (result.result.data && result.result.data.length > 0) {
+            newPriceData[result.ticker] = result.result.data;
+            // Aggiorna il flag se almeno uno dei nuovi fetch ha usato dati sintetici
+            if (result.result.isSynthetic) {
+              didUseSynthetic = true;
+            }
+          } else {
+            // Se il fetch fallisce e non restituisce dati, consideralo come sintetico
+            // (anche se generateSyntheticPrices dovrebbe sempre restituire qualcosa)
+             didUseSynthetic = true;
           }
         });
 
-        // 5. Aggiorna lo stato dei prezzi (per i render futuri)
-        setPriceData(newPriceData);
+        // Controlla anche se *dati già presenti* potrebbero essere stati sintetici
+        // (Questa parte è un'approssimazione, ideale sarebbe salvare isSynthetic nello stato priceData)
+        if (!didUseSynthetic) {
+            for (const asset of assets) {
+                const t = asset.ticker;
+                // Se un asset richiesto non ha dati *dopo* il fetch, significa che è fallito -> sintetico
+                if(t && !newPriceData[t]) {
+                    didUseSynthetic = true;
+                    break;
+                }
+            }
+        }
 
-        // 6. ORA esegui i calcoli usando l'oggetto 'newPriceData' locale,
-        //    che contiene sia i vecchi dati che quelli appena scaricati.
+
+        setPriceData(newPriceData);
+        // *** AGGIORNA LO STATO SINTETICO ***
+        setUsingSyntheticData(didUseSynthetic);
+
         const series = computeNavSeries(newPriceData, assets, initialCapital);
         setNavSeries(series);
 
-        // 7. Calcola metriche e istogramma sulla nuova serie
         if (series.length >= 2) {
           const calculatedMetrics = calculateMetrics(series);
           setMetrics(calculatedMetrics);
@@ -112,7 +134,6 @@ export default function App() {
           const histogram = calculateHistogram(series);
           setHistogramData(histogram);
         } else {
-          // Resetta se la serie è troppo corta (es. dati mancanti)
           setMetrics(emptyMetrics);
           setHistogramData([]);
         }
@@ -121,15 +142,14 @@ export default function App() {
         console.error("Errore durante il ricalcolo:", error);
         setMetrics(emptyMetrics);
         setHistogramData([]);
+        setUsingSyntheticData(true); // Assumi sintetico in caso di errore generale
       } finally {
         setLoading(false);
       }
     }
 
     recalculate();
-    // Questo useEffect si attiva solo quando gli asset o il capitale cambiano.
-    // Non includiamo 'priceData' per evitare loop infiniti.
-  }, [assets, initialCapital]);
+  }, [assets, initialCapital]); // Dipendenze corrette
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -147,7 +167,8 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
+              {/* Controlli Capitale, Valuta, Scala */}
+               <div className="flex items-center gap-2">
                 <label className="text-xs text-gray-600 font-medium">Initial Capital</label>
                 <input
                   type="number"
@@ -199,14 +220,15 @@ export default function App() {
 
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-1"> {/* Ridotto mb */}
                 <div>
                   <h2 className="text-lg font-medium text-gray-900">Portfolio Value</h2>
                   <p className="text-xs text-gray-500 mt-0.5">
                     Historical performance over time
                   </p>
                 </div>
-                {metrics.annualReturn !== null && (
+                {/* Metriche Annual Return */}
+                 {metrics.annualReturn !== null && (
                   <div className="text-right">
                     <div className="text-xs text-gray-500">Annual Return</div>
                     <div className={`text-xl font-semibold ${
@@ -218,6 +240,24 @@ export default function App() {
                 )}
               </div>
 
+               {/* *** MESSAGGIO DATI SINTETICI/REALI *** */}
+               {usingSyntheticData !== null && !loading && assets.length > 0 && (
+                <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md mb-4 ${
+                    usingSyntheticData
+                    ? 'bg-orange-50 text-orange-700'
+                    : 'bg-green-50 text-green-700'
+                }`}>
+                  <AlertTriangle className={`w-4 h-4 ${usingSyntheticData ? '' : 'hidden'}`} />
+                  <span>
+                    {usingSyntheticData
+                      ? "Warning: Simulation is using synthetic (randomized) data due to API limits or errors."
+                      : "Simulation is using real historical market data."}
+                  </span>
+                </div>
+              )}
+
+
+              {/* Grafico Portfolio */}
               {loading && assets.length > 0 ? (
                 <div className="h-80 flex items-center justify-center">
                   <div className="text-sm text-gray-400">Loading data...</div>
@@ -227,6 +267,7 @@ export default function App() {
               )}
             </div>
 
+            {/* Griglia Metriche */}
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               <MetricsCard
                 title="Annual Return"
@@ -258,6 +299,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* Istogramma */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-medium text-gray-900 mb-4">Annual Returns Distribution</h2>
           <p className="text-xs text-gray-500 mb-4">
@@ -272,6 +314,7 @@ export default function App() {
           )}
         </div>
 
+        {/* Footer */}
         <footer className="mt-8 text-center text-xs text-gray-500">
           Portfolio backtesting data provided by Alpha Vantage & EOD Historical Data.
         </footer>
