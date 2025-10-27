@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Loader2 } from 'lucide-react'; // Aggiunto Loader2
+import { Search, Loader2 } from 'lucide-react';
 import { searchAssets } from '../lib/assetData';
 import { AssetSuggestion } from '../types';
 
