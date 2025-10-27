@@ -37,12 +37,12 @@ export default function App() {
   const priceCache = useRef<Record<string, { data: PricePoint[], timestamp: number }>>({});
   const CACHE_TTL = 1000 * 60 * 60; // 1 ora
 
-  const handleAddAsset = (ticker: string, isin: string | undefined, weight: number, currency: string) => {
+  const handleAddAsset = (ticker: string, isin: string | undefined, currency: string) => {
     const newAsset: Asset = { 
       id: uid(), 
       ticker, 
       isin, 
-      weight: Math.max(0, Math.min(100, weight)), 
+      weight: 10, // Peso predefinito 10%
       currency 
     };
     if (!assets.some(a => a.ticker === ticker)) {
@@ -140,37 +140,37 @@ export default function App() {
   }, [assets, initialCapital, backtestYears, currency]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      <header className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-6 py-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-white" />
+              <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
+                <TrendingUp className="w-7 h-7 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-semibold text-gray-900">Portfolio Analyzer</h1>
-                <p className="text-xs text-gray-500">Backtest con dati reali di mercato</p>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">Portfolio Analyzer</h1>
+                <p className="text-sm text-gray-600">Backtest con dati reali di mercato</p>
               </div>
             </div>
 
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-600 font-medium">Capitale Iniziale</label>
+              <div className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
+                <label className="text-sm text-gray-700 font-medium">Capitale</label>
                 <input
                   type="number"
                   value={initialCapital}
                   onChange={(e) => setInitialCapital(Number(e.target.value))}
-                  className="w-32 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-32 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
 
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-600 font-medium">Anni Backtest</label>
+              <div className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
+                <label className="text-sm text-gray-700 font-medium">Periodo</label>
                 <select
                   value={backtestYears}
                   onChange={(e) => setBacktestYears(Number(e.target.value))}
-                  className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                 >
                   <option value={1}>1 anno</option>
                   <option value={2}>2 anni</option>
@@ -182,25 +182,25 @@ export default function App() {
                 </select>
               </div>
 
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-600 font-medium">Valuta</label>
+              <div className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
+                <label className="text-sm text-gray-700 font-medium">Valuta</label>
                 <select
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
-                  className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                 >
-                  <option value="EUR">EUR</option>
-                  <option value="USD">USD</option>
-                  <option value="GBP">GBP</option>
+                  <option value="EUR">EUR €</option>
+                  <option value="USD">USD $</option>
+                  <option value="GBP">GBP £</option>
                 </select>
               </div>
 
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-600 font-medium">Scala</label>
+              <div className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
+                <label className="text-sm text-gray-700 font-medium">Scala</label>
                 <select
                   value={scale}
                   onChange={(e) => setScale(e.target.value as 'linear' | 'log')}
-                  className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                 >
                   <option value="linear">Lineare</option>
                   <option value="log">Logaritmica</option>
@@ -223,41 +223,41 @@ export default function App() {
           </div>
 
           <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-lg p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-lg font-medium text-gray-900">Valore Portfolio</h2>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <h2 className="text-xl font-bold text-gray-900">Valore Portfolio</h2>
+                  <p className="text-sm text-gray-600 mt-1">
                     Performance storica negli ultimi {backtestYears} {backtestYears === 1 ? 'anno' : 'anni'}
                   </p>
                 </div>
                 {metrics.annualReturn !== null && (
-                  <div className="text-right">
-                    <div className="text-xs text-gray-500">Rendimento Annuo</div>
-                    <div className={`text-xl font-semibold ${
+                  <div className="text-right bg-gradient-to-br from-blue-50 to-indigo-50 px-6 py-3 rounded-xl border border-blue-200">
+                    <div className="text-xs font-medium text-gray-600 uppercase tracking-wide">Rendimento Annuo</div>
+                    <div className={`text-2xl font-bold mt-1 ${
                       metrics.annualReturn >= 0 ? 'text-green-600' : 'text-red-600'
                     }`}>
-                      {(metrics.annualReturn * 100).toFixed(2)}%
+                      {metrics.annualReturn >= 0 ? '+' : ''}{(metrics.annualReturn * 100).toFixed(2)}%
                     </div>
                   </div>
                 )}
               </div>
 
               {error && (
-                <div className="flex items-start gap-2 text-sm px-4 py-3 rounded-md mb-4 bg-red-50 text-red-700 border border-red-200">
+                <div className="flex items-start gap-3 text-sm px-5 py-4 rounded-xl mb-4 bg-red-50 text-red-700 border border-red-200">
                   <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                   <div>
-                    <div className="font-medium">Errore nel caricamento dati</div>
+                    <div className="font-semibold">Errore nel caricamento dati</div>
                     <div className="text-xs mt-1">{error}</div>
                   </div>
                 </div>
               )}
 
               {loading ? (
-                <div className="h-80 flex items-center justify-center">
+                <div className="h-80 flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl">
                   <div className="text-center">
-                    <div className="inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-2"></div>
-                    <div className="text-sm text-gray-500">Caricamento dati di mercato...</div>
+                    <div className="inline-block w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3"></div>
+                    <div className="text-sm font-medium text-gray-700">Caricamento dati di mercato...</div>
                   </div>
                 </div>
               ) : (
@@ -268,7 +268,7 @@ export default function App() {
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               <MetricsCard
                 title="Rendimento Annuo"
-                value={metrics.annualReturn !== null ? `${(metrics.annualReturn * 100).toFixed(2)}%` : '—'}
+                value={metrics.annualReturn !== null ? `${metrics.annualReturn >= 0 ? '+' : ''}${(metrics.annualReturn * 100).toFixed(2)}%` : '—'}
                 trend={metrics.annualReturn !== null && metrics.annualReturn >= 0 ? 'positive' : 'negative'}
               />
               <MetricsCard
@@ -290,7 +290,32 @@ export default function App() {
               />
               <MetricsCard
                 title="Valore Finale"
-                value={metrics.finalValue !== null ? `${currency === 'EUR' ? '€' : '$'}${(metrics.finalValue / 1000).toFixed(1)}k` : '—'}
+                value={metrics.finalValue !== null ? `${currency === 'EUR' ? '€' : currency === 'USD' ? '
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-lg p-6">
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Distribuzione Rendimenti Annui</h2>
+          <p className="text-sm text-gray-600 mb-6">
+            Distribuzione dei rendimenti rolling a 1 anno dai dati storici
+          </p>
+          {loading ? (
+            <div className="h-64 flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl">
+              <div className="text-sm text-gray-500">Caricamento...</div>
+            </div>
+          ) : (
+            <ReturnsHistogram data={histogramData} />
+          )}
+        </div>
+
+        <footer className="mt-8 text-center text-sm text-gray-600 bg-white rounded-xl py-4 border border-gray-200">
+          <p className="font-medium">Dati forniti da Alpha Vantage & EOD Historical Data</p>
+          <p className="text-xs text-gray-500 mt-1">Solo dati reali di mercato • Aggiornati giornalmente</p>
+        </footer>
+      </main>
+    </div>
+  );
+}
+ : '£'}${(metrics.finalValue / 1000).toFixed(1)}k` : '—'}
               />
             </div>
           </div>
@@ -311,7 +336,7 @@ export default function App() {
         </div>
 
         <footer className="mt-8 text-center text-xs text-gray-500">
-          Dati forniti da Alpha Vantage & EOD Historical Data
+          Dati forniti da Alpha Vantage & EOD Historical Data • Solo dati reali di mercato
         </footer>
       </main>
     </div>
