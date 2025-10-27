@@ -221,8 +221,42 @@ export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, 
     console.log(`Dati reali caricati per ${ticker} da Edge Function.`);
     return data;
 
+export async function fetchPriceHistory(
+  ticker: string,
+  days: number = 365 * 5,
+  currency: string = 'USD'
+): Promise<{ data: PricePoint[], isSynthetic: boolean }> { // Tipo di ritorno modificato
+
+  if (ticker.startsWith('CRYPTO:')) {
+     console.warn(`Ticker Crypto ${ticker} non supportato, uso dati sintetici.`);
+     // Restituisce dati sintetici con flag true
+     return { data: generateSyntheticPrices(ticker, days, currency), isSynthetic: true };
+  }
+
+  try {
+    const { data, error } = await supabase.functions.invoke('fetch-prices', {
+      body: { ticker, currency }
+    });
+
+    if (error) {
+      const errorMessage = (error.message || '').toLowerCase();
+      if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+        throw new Error('API rate limit reached');
+      }
+      throw new Error(`Errore Edge Function: ${error.message}`);
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error('Nessun dato ricevuto dalla Edge Function.');
+    }
+
+    console.log(`Dati reali caricati per ${ticker} da Edge Function.`);
+    // Restituisce i dati reali con flag false
+    return { data: data, isSynthetic: false };
+
   } catch (e) {
     console.warn(`fetchPriceHistory(${ticker}) fallito, ripiego su dati sintetici. Errore: ${(e as Error).message}`);
-    return generateSyntheticPrices(ticker, days, currency);
+    // Restituisce dati sintetici con flag true in caso di errore
+    return { data: generateSyntheticPrices(ticker, days, currency), isSynthetic: true };
   }
 }
