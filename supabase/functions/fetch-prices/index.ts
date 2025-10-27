@@ -41,7 +41,16 @@ Deno.serve(async (req: Request) => {
     }
 
     const ALPHA_VANTAGE_KEY = Deno.env.get("ALPHA_VANTAGE_KEY") || "demo";
-    const apiUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${ticker}&outputsize=full&apikey=${ALPHA_VANTAGE_KEY}`;
+    
+    // *** INIZIO CORREZIONE 1: Traduzione Ticker ***
+    // Corregge il disallineamento dei suffissi tra EODHD (.AS) e Alpha Vantage (.AMS)
+    let apiTicker = ticker;
+    if (apiTicker.endsWith(".AS")) {
+      apiTicker = apiTicker.replace(".AS", ".AMS");
+    }
+    // *** FINE CORREZIONE 1 ***
+
+    const apiUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${apiTicker}&outputsize=full&apikey=${ALPHA_VANTAGE_KEY}`;
 
     const response = await fetch(apiUrl);
 
@@ -51,25 +60,23 @@ Deno.serve(async (req: Request) => {
 
     const data = await response.json();
 
-    // *** INIZIO CORREZIONE: Gestione robusta degli errori API ***
-
+    // *** INIZIO CORREZIONE 2: Gestione Robusta Errori API ***
+    
     // 1. Controlla i messaggi di errore specifici dell'API
     if (data["Error Message"]) {
       console.warn(`Alpha Vantage Error for ${ticker}: ${data["Error Message"]}`);
-      // Restituiamo 404 (Not Found) se l'API non riconosce il ticker
       return new Response(
         JSON.stringify({ error: `API Error: ${data["Error Message"]}` }),
         {
-          status: 404, // 404 Not Found (o 400 Bad Request) è meglio di 500
+          status: 404, // 404 Not Found (ticker non valido)
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
     }
 
-    // 2. Controlla le note (spesso rate limit o info)
+    // 2. Controlla le note (spesso rate limit)
     if (data.Note) {
       console.warn(`Alpha Vantage Note for ${ticker}: ${data.Note}`);
-      // Questo è quasi sempre un rate limit
       return new Response(
         JSON.stringify({ error: `API rate limit reached: ${data.Note}` }),
         {
@@ -82,12 +89,11 @@ Deno.serve(async (req: Request) => {
     // 3. Controlla i dati veri e propri
     const timeSeries = data["Time Series (Daily)"];
     if (!timeSeries) {
-      // Se non ci sono errori o note, ma mancano i dati, è un formato non valido
       console.error(`Invalid data format for ${ticker}`, data);
       throw new Error("Invalid data format from Alpha Vantage (Time Series missing)");
     }
     
-    // *** FINE CORREZIONE ***
+    // *** FINE CORREZIONE 2 ***
 
     const prices = [];
     for (const date in timeSeries) {
@@ -108,7 +114,7 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({ error: (error as Error).message }),
       {
-        status: 500, // Questo ora avverrà solo per errori *veri* del server
+        status: 500, // Errore server generico
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
     );
