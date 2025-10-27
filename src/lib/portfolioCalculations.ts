@@ -57,11 +57,12 @@ export function computeNavSeries(
     let rec = arr.find(r => r.date === commonStart);
     
     // *** INIZIO CORREZIONE: Cerca la data o la prima successiva ***
-    if (!rec) rec = arr.find(r => r.date >= commonStart); // Trova il record in data o il primo successivo
+    // Se non trova il prezzo esatto alla data di inizio, cerca il primo prezzo
+    // disponibile *a partire da* (maggiore o UGUALE) quella data.
+    if (!rec) rec = arr.find(r => r.date >= commonStart);
     // *** FINE CORREZIONE ***
     
     if (rec) {
-      // *** MODIFICA: Usa la valuta dall'oggetto Asset (ottenuto dalla ricerca API) ***
       const assetCurrency = asset.currency || rec.currency || 'USD';
       const rate = EXCHANGE_RATES[assetCurrency]?.rateToEUR || 1;
       const priceInEUR = rec.close * rate;
@@ -92,7 +93,6 @@ export function computeNavSeries(
       }
       
       if (rec) {
-        // *** MODIFICA: Usa la valuta dall'oggetto Asset (ottenuto dalla ricerca API) ***
         const assetCurrency = asset.currency || rec.currency || 'USD';
         const rate = EXCHANGE_RATES[assetCurrency]?.rateToEUR || 1;
         const priceInEUR = rec.close * rate;
