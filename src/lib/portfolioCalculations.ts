@@ -1,7 +1,7 @@
 // src/lib/portfolioCalculations.ts
 
 import { Asset, PricePoint, NavPoint, PortfolioMetrics } from '../types';
-import { EXCHANGE_RATES } from './assetData'; // Rimosso ASSET_DATABASE
+import { EXCHANGE_RATES } from './assetData';
 
 /**
  * Formatta un valore numerico in una stringa di valuta (es. €1.2M, $120k).

@@ -25,7 +25,7 @@ This app uses Supabase Edge Functions to proxy external API calls and avoid CORS
 ```
 
 **Environment Variables**:
-- `EODHD_API_KEY`: API key for EOD Historical Data
+- `EODHD_API_KEY`:  68fe793540ec48.53643271
 
 ### 2. fetch-prices
 **Endpoint**: `{SUPABASE_URL}/functions/v1/fetch-prices`
@@ -48,7 +48,7 @@ This app uses Supabase Edge Functions to proxy external API calls and avoid CORS
 ```
 
 **Environment Variables**:
-- `ALPHA_VANTAGE_KEY`: API key for Alpha Vantage
+- `ALPHA_VANTAGE_KEY`:  RP16DXFQD0CRY6SP
 
 ## Setting Up API Keys
 

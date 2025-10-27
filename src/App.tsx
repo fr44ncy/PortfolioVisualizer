@@ -1,20 +1,15 @@
-import React, { useState, useEffect, useCallback } from 'react'; // Aggiunto useCallback
-import { TrendingUp, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { TrendingUp, AlertCircle } from 'lucide-react';
 import { Asset, NavPoint, PricePoint, PortfolioMetrics } from './types';
 import PortfolioComposition from './components/PortfolioComposition';
 import PortfolioChart from './components/PortfolioChart';
 import ReturnsHistogram from './components/ReturnsHistogram';
 import MetricsCard from './components/MetricsCard';
-import { fetchPriceHistory, EXCHANGE_RATES } from './lib/assetData';
-import { computeNavSeries, calculateMetrics, calculateHistogram, formatCurrency } from './lib/portfolioCalculations';
+import { fetchPriceHistory } from './lib/assetData';
+import { computeNavSeries, calculateMetrics, calculateHistogram } from './lib/portfolioCalculations';
 
 function uid() {
   return Math.random().toString(36).slice(2, 9);
-}
-
-interface PriceDataEntry {
-  data: PricePoint[];
-  isSynthetic: boolean;
 }
 
 const emptyMetrics: PortfolioMetrics = {
@@ -30,20 +25,28 @@ export default function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [currency, setCurrency] = useState<string>('EUR');
   const [initialCapital, setInitialCapital] = useState<number>(100000);
+  const [backtestYears, setBacktestYears] = useState<number>(5);
   const [scale, setScale] = useState<'linear' | 'log'>('linear');
-  const [priceData, setPriceData] = useState<Record<string, PriceDataEntry>>({});
   const [navSeries, setNavSeries] = useState<NavPoint[]>([]);
   const [metrics, setMetrics] = useState<PortfolioMetrics>(emptyMetrics);
   const [histogramData, setHistogramData] = useState<{ bin: string; count: number }[]>([]);
   const [loading, setLoading] = useState(false);
-  const [usingSyntheticData, setUsingSyntheticData] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Usa useRef per la cache dei prezzi - evita loop infiniti
+  const priceCache = useRef<Record<string, { data: PricePoint[], timestamp: number }>>({});
+  const CACHE_TTL = 1000 * 60 * 60; // 1 ora
 
   const handleAddAsset = (ticker: string, isin: string | undefined, weight: number, currency: string) => {
-    const newAsset: Asset = { id: uid(), ticker, isin, weight: Math.max(0, Math.min(100, weight)), currency };
+    const newAsset: Asset = { 
+      id: uid(), 
+      ticker, 
+      isin, 
+      weight: Math.max(0, Math.min(100, weight)), 
+      currency 
+    };
     if (!assets.some(a => a.ticker === ticker)) {
       setAssets(prev => [...prev, newAsset]);
-    } else {
-      console.warn(`Asset ${ticker} già presente.`);
     }
   };
 
@@ -57,139 +60,85 @@ export default function App() {
     );
   };
 
-  // *** useEffect Riscritto per maggiore chiarezza e affidabilità ***
   useEffect(() => {
-    const recalculatePortfolio = async () => {
-      // 1. Reset se non ci sono asset
+    const calculatePortfolio = async () => {
       if (assets.length === 0) {
         setNavSeries([]);
         setMetrics(emptyMetrics);
         setHistogramData([]);
-        setUsingSyntheticData(null);
-        setLoading(false);
+        setError(null);
         return;
       }
 
       setLoading(true);
-      setUsingSyntheticData(null); // Reset temporaneo durante il caricamento
-
-      // Oggetto per contenere i dati necessari per *questa* esecuzione
-      const currentRunData: Record<string, PriceDataEntry> = {};
-      let anySyntheticInThisRun = false;
-      let allDataAvailable = true;
+      setError(null);
 
       try {
-        // 2. Determina quali dati mancano
-        const requiredTickers = assets.map(a => a.ticker).filter(Boolean);
-        const tickersToFetch = requiredTickers.filter(ticker => !priceData[ticker]);
+        const days = backtestYears * 365;
+        const priceData: Record<string, PricePoint[]> = {};
+        const now = Date.now();
 
-        // 3. Avvia i fetch necessari
-        const fetchPromises = tickersToFetch.map(ticker => {
-          const asset = assets.find(a => a.ticker === ticker);
-          return fetchPriceHistory(ticker, 365 * 5, asset?.currency || 'USD')
-            .then(result => ({ ticker, ...result })); // result è { data, isSynthetic }
-        });
+        // Crea una chiave cache che include anni e valuta
+        const cacheKey = (ticker: string) => `${ticker}_${backtestYears}_${currency}`;
 
-        // 4. Attendi i risultati dei fetch
-        const fetchedResults = await Promise.all(fetchPromises);
+        // Fetch dei prezzi per ogni asset
+        for (const asset of assets) {
+          if (!asset.ticker) continue;
 
-        // 5. Prepara l'oggetto `newlyFetchedData` per aggiornare la cache (stato `priceData`)
-        const newlyFetchedData: Record<string, PriceDataEntry> = {};
-        fetchedResults.forEach(result => {
-          newlyFetchedData[result.ticker] = { data: result.data, isSynthetic: result.isSynthetic };
-        });
-
-        // Aggiorna la cache (stato `priceData`) *prima* di procedere
-        // Usiamo l'aggiornamento funzionale per sicurezza con render rapidi
-        setPriceData(prevData => ({ ...prevData, ...newlyFetchedData }));
-
-        // 6. Costruisci l'insieme completo dei dati per questo calcolo
-        //    (usando la cache *aggiornata* implicitamente nel prossimo ciclo di render,
-        //     ma per sicurezza leggiamo dai dati appena ottenuti e dalla cache *precedente*)
-        requiredTickers.forEach(ticker => {
-          const cachedData = priceData[ticker]; // Dati dalla cache *prima* dell'aggiornamento
-          const newData = newlyFetchedData[ticker]; // Dati *appena* scaricati
-
-          if (newData) { // Se abbiamo scaricato nuovi dati, usiamo quelli
-            currentRunData[ticker] = newData;
-            if (newData.isSynthetic) {
-              anySyntheticInThisRun = true;
-            }
-            if (!newData.data || newData.data.length === 0) {
-                 console.warn(`Fetch per ${ticker} non ha restituito dati.`);
-                 allDataAvailable = false; // Dati mancanti
-            }
-          } else if (cachedData) { // Altrimenti, usiamo i dati in cache
-            currentRunData[ticker] = cachedData;
-            if (cachedData.isSynthetic) {
-              anySyntheticInThisRun = true;
-            }
-             if (!cachedData.data || cachedData.data.length === 0) {
-                 console.warn(`Dati in cache per ${ticker} sono vuoti.`);
-                 allDataAvailable = false; // Dati mancanti
-            }
-          } else {
-            // Questo non dovrebbe accadere se la logica sopra è corretta
-            console.error(`Errore logico: Dati per ${ticker} non trovati né in cache né fetchati.`);
-            allDataAvailable = false;
-            anySyntheticInThisRun = true; // Considera errore come sintetico
+          const key = cacheKey(asset.ticker);
+          
+          // Controlla la cache
+          const cached = priceCache.current[key];
+          if (cached && (now - cached.timestamp) < CACHE_TTL) {
+            priceData[asset.ticker] = cached.data;
+            continue;
           }
-        });
 
-
-        // 7. Imposta il flag definitivo per l'UI
-        setUsingSyntheticData(anySyntheticInThisRun || !allDataAvailable);
-
-        // 8. Esegui i calcoli SOLO se tutti i dati sono disponibili
-        if (allDataAvailable && assets.length > 0) { // Ricontrolla assets.length
-          // Estrai solo i PricePoint[] per le funzioni di calcolo
-          const calculationPricePoints: Record<string, PricePoint[]> = {};
-          requiredTickers.forEach(ticker => {
-            calculationPricePoints[ticker] = currentRunData[ticker].data;
-          });
-
-          const series = computeNavSeries(calculationPricePoints, assets, initialCapital);
-          setNavSeries(series);
-
-          if (series.length >= 2) {
-            const calculatedMetrics = calculateMetrics(series);
-            setMetrics(calculatedMetrics);
-            const histogram = calculateHistogram(series);
-            setHistogramData(histogram);
-          } else {
-            console.warn("Serie NAV troppo corta dopo il calcolo, possibile problema nei dati o calcoli.");
-            setNavSeries([]);
-            setMetrics(emptyMetrics);
-            setHistogramData([]);
-            // Non impostare usingSyntheticData qui, è già stato determinato
+          // Fetch dai dati reali
+          const result = await fetchPriceHistory(asset.ticker, days, asset.currency);
+          
+          if (!result.data || result.data.length === 0) {
+            throw new Error(`Nessun dato disponibile per ${asset.ticker}. Verifica che il ticker sia corretto.`);
           }
-        } else {
-          // Se i dati non sono disponibili o assets è vuoto, resetta i risultati
-          console.warn(`Calcolo saltato. allDataAvailable: ${allDataAvailable}, assets.length: ${assets.length}`);
-          setNavSeries([]);
-          setMetrics(emptyMetrics);
-          setHistogramData([]);
+
+          // Salva nella cache
+          priceCache.current[key] = {
+            data: result.data,
+            timestamp: now
+          };
+          priceData[asset.ticker] = result.data;
         }
 
-      } catch (error) {
-        console.error("Errore nel processo di ricalcolo:", error);
+        // Calcola le metriche con la valuta corretta
+        const series = computeNavSeries(priceData, assets, initialCapital, currency);
+        
+        if (series.length < 2) {
+          throw new Error('Dati insufficienti per il calcolo. Prova ad aumentare il periodo di backtest o cambia asset.');
+        }
+
+        setNavSeries(series);
+
+        const calculatedMetrics = calculateMetrics(series);
+        setMetrics(calculatedMetrics);
+
+        const histogram = calculateHistogram(series);
+        setHistogramData(histogram);
+
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Errore sconosciuto';
+        console.error('Errore calcolo portfolio:', errorMessage);
+        setError(errorMessage);
         setNavSeries([]);
         setMetrics(emptyMetrics);
         setHistogramData([]);
-        setUsingSyntheticData(true); // Errore -> flagga come sintetico
       } finally {
-        setLoading(false); // Assicura che loading finisca
+        setLoading(false);
       }
     };
 
-    recalculatePortfolio();
-    // Le dipendenze rimangono assets e initialCapital
-  }, [assets, initialCapital, priceData]); // Aggiunto priceData come dipendenza per ri-triggerare se la cache cambia
-                                          // Se questo causa loop, potrebbe essere necessario ottimizzare ulteriormente,
-                                          // ma proviamo prima così per garantire la coerenza.
+    calculatePortfolio();
+  }, [assets, initialCapital, backtestYears, currency]);
 
-
-  // Il resto del componente JSX rimane invariato...
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
@@ -201,14 +150,13 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-semibold text-gray-900">Portfolio Analyzer</h1>
-                <p className="text-xs text-gray-500">Backtest and analyze your investment portfolio</p>
+                <p className="text-xs text-gray-500">Backtest con dati reali di mercato</p>
               </div>
             </div>
 
             <div className="flex items-center gap-4">
-              {/* Controlli Capitale, Valuta, Scala */}
-               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-600 font-medium">Initial Capital</label>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-600 font-medium">Capitale Iniziale</label>
                 <input
                   type="number"
                   value={initialCapital}
@@ -218,27 +166,44 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-600 font-medium">Currency</label>
+                <label className="text-xs text-gray-600 font-medium">Anni Backtest</label>
+                <select
+                  value={backtestYears}
+                  onChange={(e) => setBacktestYears(Number(e.target.value))}
+                  className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value={1}>1 anno</option>
+                  <option value={2}>2 anni</option>
+                  <option value={3}>3 anni</option>
+                  <option value={5}>5 anni</option>
+                  <option value={10}>10 anni</option>
+                  <option value={15}>15 anni</option>
+                  <option value={20}>20 anni</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-600 font-medium">Valuta</label>
                 <select
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
                   className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {Object.keys(EXCHANGE_RATES).map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
+                  <option value="EUR">EUR</option>
+                  <option value="USD">USD</option>
+                  <option value="GBP">GBP</option>
                 </select>
               </div>
 
               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-600 font-medium">Scale</label>
+                <label className="text-xs text-gray-600 font-medium">Scala</label>
                 <select
                   value={scale}
                   onChange={(e) => setScale(e.target.value as 'linear' | 'log')}
                   className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="linear">Linear</option>
-                  <option value="log">Logarithmic</option>
+                  <option value="linear">Lineare</option>
+                  <option value="log">Logaritmica</option>
                 </select>
               </div>
             </div>
@@ -259,17 +224,16 @@ export default function App() {
 
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-1"> {/* Ridotto mb */}
+              <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-lg font-medium text-gray-900">Portfolio Value</h2>
+                  <h2 className="text-lg font-medium text-gray-900">Valore Portfolio</h2>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Historical performance over time
+                    Performance storica negli ultimi {backtestYears} {backtestYears === 1 ? 'anno' : 'anni'}
                   </p>
                 </div>
-                {/* Metriche Annual Return */}
-                 {metrics.annualReturn !== null && (
+                {metrics.annualReturn !== null && (
                   <div className="text-right">
-                    <div className="text-xs text-gray-500">Annual Return</div>
+                    <div className="text-xs text-gray-500">Rendimento Annuo</div>
                     <div className={`text-xl font-semibold ${
                       metrics.annualReturn >= 0 ? 'text-green-600' : 'text-red-600'
                     }`}>
@@ -279,42 +243,36 @@ export default function App() {
                 )}
               </div>
 
-               {/* *** MESSAGGIO DATI SINTETICI/REALI *** */}
-               {usingSyntheticData !== null && !loading && assets.length > 0 && (
-                <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md my-4 ${
-                    usingSyntheticData
-                    ? 'bg-orange-50 text-orange-700'
-                    : 'bg-green-50 text-green-700'
-                }`}>
-                  <AlertTriangle className={`w-4 h-4 ${usingSyntheticData ? '' : 'hidden'}`} />
-                  <span>
-                    {usingSyntheticData
-                      ? "Warning: Simulation is using synthetic (randomized) data due to API limits, errors, or missing data."
-                      : "Simulation is using real historical market data."}
-                  </span>
+              {error && (
+                <div className="flex items-start gap-2 text-sm px-4 py-3 rounded-md mb-4 bg-red-50 text-red-700 border border-red-200">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-medium">Errore nel caricamento dati</div>
+                    <div className="text-xs mt-1">{error}</div>
+                  </div>
                 </div>
               )}
 
-
-              {/* Grafico Portfolio */}
               {loading ? (
                 <div className="h-80 flex items-center justify-center">
-                  <div className="text-sm text-gray-400">Loading data...</div>
+                  <div className="text-center">
+                    <div className="inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                    <div className="text-sm text-gray-500">Caricamento dati di mercato...</div>
+                  </div>
                 </div>
               ) : (
                 <PortfolioChart data={navSeries} currency={currency} scale={scale} />
               )}
             </div>
 
-            {/* Griglia Metriche */}
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               <MetricsCard
-                title="Annual Return"
+                title="Rendimento Annuo"
                 value={metrics.annualReturn !== null ? `${(metrics.annualReturn * 100).toFixed(2)}%` : '—'}
                 trend={metrics.annualReturn !== null && metrics.annualReturn >= 0 ? 'positive' : 'negative'}
               />
               <MetricsCard
-                title="Volatility"
+                title="Volatilità"
                 value={metrics.annualVol !== null ? `${(metrics.annualVol * 100).toFixed(2)}%` : '—'}
               />
               <MetricsCard
@@ -331,31 +289,29 @@ export default function App() {
                 value={metrics.cvar95 !== null ? `${(metrics.cvar95 * 100).toFixed(2)}%` : '—'}
               />
               <MetricsCard
-                title="Final Value"
-                value={metrics.finalValue !== null ? formatCurrency(metrics.finalValue, currency) : '—'}
+                title="Valore Finale"
+                value={metrics.finalValue !== null ? `${currency === 'EUR' ? '€' : '$'}${(metrics.finalValue / 1000).toFixed(1)}k` : '—'}
               />
             </div>
           </div>
         </div>
 
-        {/* Istogramma */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Annual Returns Distribution</h2>
+          <h2 className="text-lg font-medium text-gray-900 mb-4">Distribuzione Rendimenti Annui</h2>
           <p className="text-xs text-gray-500 mb-4">
-            Rolling 1-year return distribution from historical data
+            Distribuzione dei rendimenti rolling a 1 anno dai dati storici
           </p>
           {loading ? (
             <div className="h-64 flex items-center justify-center">
-              <div className="text-sm text-gray-400">Loading data...</div>
+              <div className="text-sm text-gray-400">Caricamento...</div>
             </div>
           ) : (
             <ReturnsHistogram data={histogramData} />
           )}
         </div>
 
-        {/* Footer */}
         <footer className="mt-8 text-center text-xs text-gray-500">
-          Portfolio backtesting data provided by Alpha Vantage & EOD Historical Data.
+          Dati forniti da Alpha Vantage & EOD Historical Data
         </footer>
       </main>
     </div>
