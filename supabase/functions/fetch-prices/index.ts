@@ -1,3 +1,5 @@
+// supabase/functions/fetch-prices/index.ts
+
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const corsHeaders = {
@@ -15,7 +17,6 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // *** CORREZIONE: Leggi i dati dal body JSON (inviato come POST) ***
     const { ticker, currency: reqCurrency } = await req.json();
     const currency = reqCurrency || "USD";
 
@@ -50,20 +51,43 @@ Deno.serve(async (req: Request) => {
 
     const data = await response.json();
 
-    if (data.Note) {
+    // *** INIZIO CORREZIONE: Gestione robusta degli errori API ***
+
+    // 1. Controlla i messaggi di errore specifici dell'API
+    if (data["Error Message"]) {
+      console.warn(`Alpha Vantage Error for ${ticker}: ${data["Error Message"]}`);
+      // Restituiamo 404 (Not Found) se l'API non riconosce il ticker
       return new Response(
-        JSON.stringify({ error: "API rate limit reached" }),
+        JSON.stringify({ error: `API Error: ${data["Error Message"]}` }),
         {
-          status: 429,
+          status: 404, // 404 Not Found (o 400 Bad Request) è meglio di 500
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
     }
 
+    // 2. Controlla le note (spesso rate limit o info)
+    if (data.Note) {
+      console.warn(`Alpha Vantage Note for ${ticker}: ${data.Note}`);
+      // Questo è quasi sempre un rate limit
+      return new Response(
+        JSON.stringify({ error: `API rate limit reached: ${data.Note}` }),
+        {
+          status: 429, // 429 Too Many Requests
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // 3. Controlla i dati veri e propri
     const timeSeries = data["Time Series (Daily)"];
     if (!timeSeries) {
-      throw new Error("Invalid data format from Alpha Vantage");
+      // Se non ci sono errori o note, ma mancano i dati, è un formato non valido
+      console.error(`Invalid data format for ${ticker}`, data);
+      throw new Error("Invalid data format from Alpha Vantage (Time Series missing)");
     }
+    
+    // *** FINE CORREZIONE ***
 
     const prices = [];
     for (const date in timeSeries) {
@@ -84,7 +108,7 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({ error: (error as Error).message }),
       {
-        status: 500,
+        status: 500, // Questo ora avverrà solo per errori *veri* del server
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
     );
