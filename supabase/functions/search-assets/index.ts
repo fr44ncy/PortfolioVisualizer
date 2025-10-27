@@ -1,3 +1,5 @@
+// supabase/functions/search-assets/index.ts
+
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const corsHeaders = {
@@ -15,7 +17,6 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // *** CORREZIONE: Leggi i dati dal body JSON (inviato come POST) ***
     const { query } = await req.json();
 
     if (!query || query.length < 2) {
@@ -47,28 +48,28 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // *** INIZIO BLOCCO LOGICA CORRETTO ***
     const suggestions = results.map((item: any) => {
       let ticker = item.Code;
-
-      if (item.Exchange && item.Exchange !== "US" && item.Exchange !== "CRYPTO") {
-        const exchangeSuffix: Record<string, string> = {
-          MI: ".MI",
-          AS: ".AS",
-          L: ".L",
-          DE: ".DE",
-          PA: ".PA",
-          SW: ".SW",
-        };
-        ticker = `${item.Code}${exchangeSuffix[item.Exchange] || "." + item.Exchange}`;
-      }
-
-      if (item.Exchange === "US") {
-        ticker = item.Code;
-      }
+      const exchangeSuffix: Record<string, string> = {
+        MI: ".MI", // Milano
+        AS: ".AS", // Amsterdam
+        L: ".L",  // Londra
+        DE: ".DE", // XETRA (Germania)
+        PA: ".PA", // Parigi
+        SW: ".SW", // Svizzera
+      };
 
       if (item.Exchange === "CRYPTO") {
         ticker = `CRYPTO:${item.Code}`;
+      } else if (item.Exchange && exchangeSuffix[item.Exchange]) {
+        // È un exchange europeo mappato, aggiungi il suffisso
+        ticker = `${item.Code}${exchangeSuffix[item.Exchange]}`;
+      } else {
+        // È US (US, ARCA, NASDAQ, etc) o non mappato -> usa il codice base
+        ticker = item.Code;
       }
+      // *** FINE BLOCCO LOGICA CORRETTO ***
 
       return {
         ticker: ticker,
