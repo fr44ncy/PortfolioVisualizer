@@ -1,131 +1,228 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Loader2 } from 'lucide-react';
-import { searchAssets } from '../lib/assetData';
-import { AssetSuggestion } from '../types';
+import { PricePoint, AssetSuggestion } from '../types';
+import { supabase } from './supabase'; // Importa il client Supabase
 
-interface AssetSearchProps {
-  onSelect: (ticker: string, isin: string | undefined, currency: string) => void;
-}
+/**
+ * Mappa ISIN -> Ticker usata SOLO come fallback per la generazione
+ * di dati sintetici se la ricerca API fallisce.
+ */
+export const ISIN_TO_TICKER: Record<string, string> = {
+  'US0378331005': 'AAPL',
+  'US5949181045': 'MSFT',
+  'US02079K3059': 'GOOGL',
+  'US0231351067': 'AMZN',
+  'US88160R1014': 'TSLA',
+  'IT0003132476': 'ENI.MI',
+  'IE00B4L5Y983': 'IWDA.AS',
+  'US0846707026': 'BRK.B',
+  'US46625H1005': 'JPM',
+  'US91324P1021': 'UNH',
+  'IE00B0M62Q58': 'IWD.AS',
+  'IE00B4L5Y999': 'IEMG.AS',
+  'IE00B1FZS350': 'QQQ.L',
+  'IE00B5BMR087': 'VUSA.AS',
+  'IE00B3RBWM25': 'VEVE.AS',
+  'US4642872000': 'SPY',
+  'US78462F1030': 'PYPL',
+  'GB00B03MLX29': 'HSBA.L',
+  'US9311421039': 'V',
+  'FR0000120271': 'BNP.PA',
+  'DE000BASF111': 'BAS.DE',
+  'JP3435000009': 'SONY',
+  'CH0038863350': 'NESN.SW',
+  'US78463V1070': 'GLD',   
+  'US78464Y4090': 'SLV',   
+  'US912810FH35': 'USO',   
+  'US912810JA50': 'UNG',   
+  'US4642882799': 'DBC',  
+  'CRYPTO:BTC': 'BTC',     
+  'CRYPTO:ETH': 'ETH',
+};
 
-// Hook per il debounce
-function useDebounce(value: string, delay: number) {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [value, delay]);
-  return debouncedValue;
-}
+/**
+ * Database di parametri (Ritorno/Volatilità) usato SOLO come fallback
+ * per la generazione di dati sintetici.
+ */
+export const ASSET_DATABASE: Record<string, { name: string; annualReturn: number; volatility: number; currency: string }> = {
+  // Azioni
+  'AAPL': { name: 'Apple Inc.', annualReturn: 0.20, volatility: 0.30, currency: 'USD' },
+  'MSFT': { name: 'Microsoft Corp.', annualReturn: 0.18, volatility: 0.25, currency: 'USD' },
+  'GOOGL': { name: 'Alphabet Inc.', annualReturn: 0.17, volatility: 0.28, currency: 'USD' },
+  'AMZN': { name: 'Amazon.com Inc.', annualReturn: 0.16, volatility: 0.33, currency: 'USD' },
+  'TSLA': { name: 'Tesla Inc.', annualReturn: 0.30, volatility: 0.60, currency: 'USD' },
+  'ENI.MI': { name: 'Eni SpA', annualReturn: 0.05, volatility: 0.22, currency: 'EUR' },
+  'IWDA.AS': { name: 'iShares MSCI World', annualReturn: 0.09, volatility: 0.16, currency: 'EUR' },
+  'BRK.B': { name: 'Berkshire Hathaway', annualReturn: 0.14, volatility: 0.22, currency: 'USD' },
+  'JPM': { name: 'JPMorgan Chase', annualReturn: 0.12, volatility: 0.28, currency: 'USD' },
+  'UNH': { name: 'UnitedHealth Group', annualReturn: 0.15, volatility: 0.24, currency: 'USD' },
 
-export default function AssetSearch({ onSelect }: AssetSearchProps) {
-  const [query, setQuery] = useState('');
-  const [suggestions, setSuggestions] = useState<AssetSuggestion[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [loading, setLoading] = useState(false); // Stato di caricamento
+  // ETF
+  'IWD.AS': { name: 'iShares MSCI World Value', annualReturn: 0.08, volatility: 0.18, currency: 'EUR' },
+  'IEMG.AS': { name: 'iShares MSCI Emerging Markets', annualReturn: 0.10, volatility: 0.25, currency: 'USD' },
+  'QQQ.L': { name: 'Invesco QQQ ETF', annualReturn: 0.19, volatility: 0.30, currency: 'USD' },
+  'VUSA.AS': { name: 'Vanguard S&P 500 UCITS', annualReturn: 0.15, volatility: 0.20, currency: 'EUR' },
+  'VEVE.AS': { name: 'Vanguard FTSE Developed Europe', annualReturn: 0.08, volatility: 0.16, currency: 'EUR' },
+  'SPY': { name: 'SPDR S&P 500 ETF', annualReturn: 0.15, volatility: 0.22, currency: 'USD' },
 
-  const debouncedQuery = useDebounce(query, 300); // Debounce di 300ms
+  // Materie prime
+  'GLD': { name: 'SPDR Gold Trust', annualReturn: 0.08, volatility: 0.18, currency: 'USD' },
+  'SLV': { name: 'iShares Silver Trust', annualReturn: 0.06, volatility: 0.25, currency: 'USD' },
+  'USO': { name: 'United States Oil Fund', annualReturn: 0.10, volatility: 0.45, currency: 'USD' },
+  'UNG': { name: 'United States Natural Gas Fund', annualReturn: 0.12, volatility: 0.50, currency: 'USD' },
+  'DBC': { name: 'Invesco Commodity Index', annualReturn: 0.07, volatility: 0.35, currency: 'USD' },
 
-  useEffect(() => {
-    if (debouncedQuery.length > 1) { // Cerca solo se la query è > 1
-      setLoading(true);
-      setShowSuggestions(true); // Mostra il box (anche se vuoto o in caricamento)
-      
-      const fetchSuggestions = async () => {
-        try {
-          const results = await searchAssets(debouncedQuery);
-          setSuggestions(results);
-        } catch (error) {
-          console.error("Errore ricerca asset:", error);
-          setSuggestions([]);
-        } finally {
-          setLoading(false);
-        }
-      };
-      
-      fetchSuggestions();
-      
-    } else {
-      setSuggestions([]);
-      setShowSuggestions(false);
-      setLoading(false);
+  // Crypto
+  'BTC': { name: 'Bitcoin', annualReturn: 0.80, volatility: 0.90, currency: 'USD' },
+  'ETH': { name: 'Ethereum', annualReturn: 0.75, volatility: 0.85, currency: 'USD' },
+  'BNB': { name: 'Binance Coin', annualReturn: 0.60, volatility: 0.80, currency: 'USD' },
+};
+
+/**
+ * Tassi di cambio (statici) per la conversione in EUR.
+ * In un'app di produzione, anche questi dovrebbero essere recuperati via API.
+ */
+export const EXCHANGE_RATES: Record<string, { symbol: string; rateToEUR: number }> = {
+  USD: { symbol: '$', rateToEUR: 0.92 },
+  EUR: { symbol: '€', rateToEUR: 1 },
+  GBP: { symbol: '£', rateToEUR: 1.15 },
+  JPY: { symbol: '¥', rateToEUR: 0.0067 },
+  CHF: { symbol: 'CHF', rateToEUR: 0.93 },
+  AUD: { symbol: 'A$', rateToEUR: 0.62 },
+  CAD: { symbol: 'C$', rateToEUR: 0.69 },
+  NZD: { symbol: 'NZ$', rateToEUR: 0.58 },
+  SEK: { symbol: 'kr', rateToEUR: 0.086 },
+  NOK: { symbol: 'kr', rateToEUR: 0.089 },
+  DKK: { symbol: 'kr', rateToEUR: 0.134 },
+  SGD: { symbol: 'S$', rateToEUR: 0.67 },
+  HKD: { symbol: 'HK$', rateToEUR: 0.12 }
+};
+
+/**
+ * Cerca asset (Ticker, ISIN, Nome) tramite Supabase Edge Function.
+ */
+export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
+  if (!query || query.length < 2) return [];
+
+  try {
+    // *** CORREZIONE: Invia i dati nel 'body' della richiesta POST ***
+    const { data, error } = await supabase.functions.invoke('search-assets', {
+      body: { query }
+    });
+
+    if (error) {
+      throw new Error(`Errore Edge Function: ${error.message}`);
     }
-  }, [debouncedQuery]); // Reagisce alla query "debounced"
 
-  const handleSelect = (suggestion: AssetSuggestion) => {
-    onSelect(suggestion.ticker, suggestion.isin, suggestion.currency);
-    setQuery('');
-    setShowSuggestions(false);
-    setSuggestions([]);
-  };
-  
-  const handleBlur = () => {
-    // Nascondi i suggerimenti quando l'utente clicca fuori
-    setTimeout(() => {
-      setShowSuggestions(false);
-    }, 150);
-  };
+    if (!Array.isArray(data)) {
+      return [];
+    }
 
-  return (
-    <div className="relative">
-      <div className="relative">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400">
-          {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Search className="w-4 h-4" />
-          )}
-        </span>
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => setShowSuggestions(query.length > 1 && true)}
-          onBlur={handleBlur}
-          placeholder="Search by ticker, ISIN or name..."
-          className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-        />
-      </div>
+    return data;
 
-      {showSuggestions && (
-        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-          {loading && suggestions.length === 0 && (
-             <div className="px-4 py-3 text-sm text-gray-500 text-center">
-               Searching...
-             </div>
-          )}
-          
-          {!loading && suggestions.length === 0 && debouncedQuery.length > 1 && (
-             <div className="px-4 py-3 text-sm text-gray-500 text-center">
-               No results found for "{debouncedQuery}"
-             </div>
-          )}
+  } catch (e) {
+    console.error(`Ricerca asset fallita: ${(e as Error).message}`);
+    return [];
+  }
+}
 
-          {suggestions.map((suggestion, idx) => (
-            <button
-              key={idx}
-              onMouseDown={() => handleSelect(suggestion)} // onMouseDown per conflitto con onBlur
-              className="w-full px-4 py-3 text-left hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg transition-colors"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium text-sm text-gray-900">{suggestion.ticker}</div>
-                  <div className="text-xs text-gray-500">{suggestion.name}</div>
-                </div>
-                <div className='text-right'>
-                  {suggestion.isin && (
-                    <div className="text-xs text-gray-400 font-mono">{suggestion.isin}</div>
-                  )}
-                  <div className="text-xs text-gray-500 font-medium">{suggestion.currency}</div>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+// --- Funzioni per dati storici (API Alpha Vantage e Fallback Sintetico) ---
+
+/**
+ * Genera un numero casuale da una distribuzione normale (metodo Box-Muller).
+ * Usato solo per i dati sintetici.
+ */
+function gaussianRandom(): number {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+/**
+ * Formatta un oggetto Date in 'YYYY-MM-DD'.
+ */
+function formatDate(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * FALLBACK: Genera una serie di prezzi sintetici (Geometric Brownian Motion).
+ * Usato solo se l'API Alpha Vantage fallisce.
+ */
+export function generateSyntheticPrices(ticker: string, days: number = 365 * 3, currency: string = 'USD'): PricePoint[] {
+  // Cerca i parametri nel database statico di fallback
+  const assetParams = ASSET_DATABASE[ticker] || { annualReturn: 0.08, volatility: 0.18 };
+  const mu = assetParams.annualReturn;
+  const sigma = assetParams.volatility;
+  const dt = 1 / 252; // Giorni di trading
+  const startPrice = 100;
+  const prices: PricePoint[] = [];
+  let price = startPrice;
+  const today = new Date();
+  const startDate = new Date(today.getTime());
+  startDate.setDate(today.getDate() - days);
+
+  for (let i = 0; i <= days; i++) {
+    const t = new Date(startDate.getTime());
+    t.setDate(startDate.getDate() + i);
+    const day = t.getDay(); // 0 = Domenica, 6 = Sabato
+    if (day === 0 || day === 6) continue; // Salta i weekend
+
+    const z = gaussianRandom();
+    const drift = (mu - 0.5 * sigma * sigma) * dt;
+    const diffusion = sigma * Math.sqrt(dt) * z;
+    price = price * Math.exp(drift + diffusion);
+    prices.push({
+      date: formatDate(t),
+      close: Number(price.toFixed(4)),
+      currency: currency // Usa la valuta passata
+    });
+  }
+
+  // Assicura che ci siano abbastanza dati (almeno ~400 giorni di trading per 2 anni)
+  if (prices.length < 400 && days < 365 * 10) {
+    return generateSyntheticPrices(ticker, days * 2, currency);
+  }
+
+  return prices;
+}
+
+/**
+ * Scarica i dati storici dei prezzi tramite Supabase Edge Function.
+ * Esegue il fallback a `generateSyntheticPrices` in caso di errore.
+ */
+export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, currency: string = 'USD'): Promise<PricePoint[]> {
+
+  if (ticker.startsWith('CRYPTO:')) {
+     console.warn(`Ticker Crypto ${ticker} non supportato, uso dati sintetici.`);
+     return generateSyntheticPrices(ticker, days, currency);
+  }
+
+  try {
+    // *** CORREZIONE: Invia i dati nel 'body' della richiesta POST ***
+    const { data, error } = await supabase.functions.invoke('fetch-prices', {
+      body: { ticker, currency }
+    });
+
+    if (error) {
+      const errorMessage = (error.message || '').toLowerCase();
+      if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+        throw new Error('API rate limit reached');
+      }
+      throw new Error(`Errore Edge Function: ${error.message}`);
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error('Nessun dato ricevuto dalla Edge Function.');
+    }
+
+    console.log(`Dati reali caricati per ${ticker} da Edge Function.`);
+    return data;
+
+  } catch (e) {
+    console.warn(`fetchPriceHistory(${ticker}) fallito, ripiego su dati sintetici. Errore: ${(e as Error).message}`);
+    return generateSyntheticPrices(ticker, days, currency);
+  }
 }
