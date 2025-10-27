@@ -29,12 +29,12 @@ export const ISIN_TO_TICKER: Record<string, string> = {
   'DE000BASF111': 'BAS.DE',
   'JP3435000009': 'SONY',
   'CH0038863350': 'NESN.SW',
-  'US78463V1070': 'GLD',   
-  'US78464Y4090': 'SLV',   
-  'US912810FH35': 'USO',   
-  'US912810JA50': 'UNG',   
-  'US4642882799': 'DBC',  
-  'CRYPTO:BTC': 'BTC',     
+  'US78463V1070': 'GLD',
+  'US78464Y4090': 'SLV',
+  'US912810FH35': 'USO',
+  'US912810JA50': 'UNG',
+  'US4642882799': 'DBC',
+  'CRYPTO:BTC': 'BTC',
   'CRYPTO:ETH': 'ETH',
 };
 
@@ -192,35 +192,8 @@ export function generateSyntheticPrices(ticker: string, days: number = 365 * 3, 
 /**
  * Scarica i dati storici dei prezzi tramite Supabase Edge Function.
  * Esegue il fallback a `generateSyntheticPrices` in caso di errore.
+ * Restituisce un oggetto con i dati e un flag che indica se sono sintetici.
  */
-export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, currency: string = 'USD'): Promise<PricePoint[]> {
-
-  if (ticker.startsWith('CRYPTO:')) {
-     console.warn(`Ticker Crypto ${ticker} non supportato, uso dati sintetici.`);
-     return generateSyntheticPrices(ticker, days, currency);
-  }
-
-  try {
-    // *** CORREZIONE: Invia i dati nel 'body' della richiesta POST ***
-    const { data, error } = await supabase.functions.invoke('fetch-prices', {
-      body: { ticker, currency }
-    });
-
-    if (error) {
-      const errorMessage = (error.message || '').toLowerCase();
-      if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-        throw new Error('API rate limit reached');
-      }
-      throw new Error(`Errore Edge Function: ${error.message}`);
-    }
-
-    if (!Array.isArray(data) || data.length === 0) {
-      throw new Error('Nessun dato ricevuto dalla Edge Function.');
-    }
-
-    console.log(`Dati reali caricati per ${ticker} da Edge Function.`);
-    return data;
-
 export async function fetchPriceHistory(
   ticker: string,
   days: number = 365 * 5,
