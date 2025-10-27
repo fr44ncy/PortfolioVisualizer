@@ -1,3 +1,5 @@
+// src/lib/portfolioCalculations.ts
+
 import { Asset, PricePoint, NavPoint, PortfolioMetrics } from '../types';
 import { EXCHANGE_RATES } from './assetData'; // Rimosso ASSET_DATABASE
 
@@ -53,7 +55,10 @@ export function computeNavSeries(
     if (!t) return;
     const arr = pricesData[t] || [];
     let rec = arr.find(r => r.date === commonStart);
-    if (!rec) rec = arr.find(r => r.date > commonStart); // Trova il record successivo se non c'è corrispondenza esatta
+    
+    // *** INIZIO CORREZIONE: Cerca la data o la prima successiva ***
+    if (!rec) rec = arr.find(r => r.date >= commonStart); // Trova il record in data o il primo successivo
+    // *** FINE CORREZIONE ***
     
     if (rec) {
       // *** MODIFICA: Usa la valuta dall'oggetto Asset (ottenuto dalla ricerca API) ***
