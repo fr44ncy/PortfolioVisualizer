@@ -12,6 +12,15 @@ function uid() {
   return Math.random().toString(36).slice(2, 9);
 }
 
+const emptyMetrics: PortfolioMetrics = {
+  annualReturn: null,
+  annualVol: null,
+  sharpe: null,
+  var95: null,
+  cvar95: null,
+  finalValue: null
+};
+
 export default function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [currency, setCurrency] = useState<string>('EUR');
@@ -19,14 +28,7 @@ export default function App() {
   const [scale, setScale] = useState<'linear' | 'log'>('linear');
   const [priceData, setPriceData] = useState<Record<string, PricePoint[]>>({});
   const [navSeries, setNavSeries] = useState<NavPoint[]>([]);
-  const [metrics, setMetrics] = useState<PortfolioMetrics>({
-    annualReturn: null,
-    annualVol: null,
-    sharpe: null,
-    var95: null,
-    cvar95: null,
-    finalValue: null
-  });
+  const [metrics, setMetrics] = useState<PortfolioMetrics>(emptyMetrics);
   const [histogramData, setHistogramData] = useState<{ bin: string; count: number }[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -51,57 +53,82 @@ export default function App() {
     );
   };
 
+  // *** CORREZIONE: LOGICA useEffect COMPLETAMENTE RISCRITTA ***
   useEffect(() => {
     async function recalculate() {
       if (assets.length === 0) {
         setNavSeries([]);
-        setMetrics({
-          annualReturn: null,
-          annualVol: null,
-          sharpe: null,
-          var95: null,
-          cvar95: null,
-          finalValue: null
-        });
+        setMetrics(emptyMetrics);
         setHistogramData([]);
         return;
       }
 
       setLoading(true);
       try {
-        const promises: Promise<void>[] = [];
+        // 1. Inizia con i dati già presenti nello stato
+        const newPriceData = { ...priceData };
+        
+        // 2. Prepara un array di promesse solo per i ticker MANCANTI
+        const promises: Promise<{ ticker: string, data: PricePoint[] }>[] = [];
+        
         for (const asset of assets) {
           const t = asset.ticker;
           if (!t) continue;
-          if (!priceData[t]) {
+          
+          // Se non abbiamo i dati per questo ticker, avvia il fetch
+          if (!newPriceData[t]) {
             promises.push(
-              // Passa la valuta a fetchPriceHistory
               fetchPriceHistory(t, 365 * 5, asset.currency).then(pd => {
-                setPriceData(old => ({ ...old, [t]: pd }));
+                // La promessa ritorna un oggetto con ticker e dati
+                return { ticker: t, data: pd };
               })
             );
           }
         }
-        await Promise.all(promises);
+        
+        // 3. Aspetta che TUTTE le nuove richieste API siano completate
+        const results = await Promise.all(promises);
 
-        const pricesObj = { ...priceData };
-        const series = computeNavSeries(pricesObj, assets, initialCapital);
+        // 4. Aggiungi i nuovi dati all'oggetto newPriceData
+        results.forEach(result => {
+          if (result.data && result.data.length > 0) {
+            newPriceData[result.ticker] = result.data;
+          }
+        });
+
+        // 5. Aggiorna lo stato dei prezzi (per i render futuri)
+        setPriceData(newPriceData);
+
+        // 6. ORA esegui i calcoli usando l'oggetto 'newPriceData' locale,
+        //    che contiene sia i vecchi dati che quelli appena scaricati.
+        const series = computeNavSeries(newPriceData, assets, initialCapital);
         setNavSeries(series);
 
+        // 7. Calcola metriche e istogramma sulla nuova serie
         if (series.length >= 2) {
           const calculatedMetrics = calculateMetrics(series);
           setMetrics(calculatedMetrics);
 
           const histogram = calculateHistogram(series);
           setHistogramData(histogram);
+        } else {
+          // Resetta se la serie è troppo corta (es. dati mancanti)
+          setMetrics(emptyMetrics);
+          setHistogramData([]);
         }
+
+      } catch (error) {
+        console.error("Errore durante il ricalcolo:", error);
+        setMetrics(emptyMetrics);
+        setHistogramData([]);
       } finally {
         setLoading(false);
       }
     }
 
-    // Nota: priceData non è più una dipendenza per evitare loop
-    // L'effetto si attiva solo quando cambiano gli asset o il capitale
+    recalculate();
+    // Questo useEffect si attiva solo quando gli asset o il capitale cambiano.
+    // Non includiamo 'priceData' per evitare loop infiniti.
   }, [assets, initialCapital]);
 
   return (
