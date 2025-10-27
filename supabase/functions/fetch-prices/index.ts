@@ -15,9 +15,9 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const url = new URL(req.url);
-    const ticker = url.searchParams.get("ticker");
-    const currency = url.searchParams.get("currency") || "USD";
+    // *** CORREZIONE: Leggi i dati dal body JSON (inviato come POST) ***
+    const { ticker, currency: reqCurrency } = await req.json();
+    const currency = reqCurrency || "USD";
 
     if (!ticker) {
       return new Response(
