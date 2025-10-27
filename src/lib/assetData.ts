@@ -96,19 +96,18 @@ export const EXCHANGE_RATES: Record<string, { symbol: string; rateToEUR: number 
 };
 
 /**
- * Cerca asset (Ticker, ISIN, Nome) utilizzando l'API EODHD.
- * Richiede la chiave VITE_EODHD_API_KEY nel file .env.local
+ * Cerca asset (Ticker, ISIN, Nome) tramite Supabase Edge Function.
  */
 export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
   if (!query || query.length < 2) return [];
 
-  const API_KEY = import.meta.env.VITE_EODHD_API_KEY || 'demo';
-  const url = `https://eodhistoricaldata.com/api/search/${encodeURIComponent(query)}?api_token=${API_KEY}&fmt=json`;
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+  const url = `${SUPABASE_URL}/functions/v1/search-assets?query=${encodeURIComponent(query)}`;
 
   try {
     const res = await fetch(url);
     if (!res.ok) {
-      throw new Error(`Errore API EODHD: ${res.status}`);
+      throw new Error(`Errore Edge Function: ${res.status}`);
     }
     const results = await res.json();
 
@@ -116,54 +115,11 @@ export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
       return [];
     }
 
-    // Mappatura Ticker EODHD -> Alpha Vantage
-    // EODHD: { "Code": "ENI", "Exchange": "MI" } -> Alpha Vantage: "ENI.MI"
-    const suggestions: AssetSuggestion[] = results.map((item: any) => {
-      let ticker = item.Code;
-      
-      // Aggiunge il suffisso per borse non USA
-      if (item.Exchange && item.Exchange !== 'US' && item.Exchange !== 'CRYPTO') {
-         const exchangeSuffix: Record<string, string> = {
-            'MI': '.MI', // Milano
-            'AS': '.AS', // Amsterdam
-            'L': '.L',  // Londra
-            'DE': '.DE', // XETRA
-            'PA': '.PA', // Parigi
-            'SW': '.SW'  // Svizzera
-         };
-         ticker = `${item.Code}${exchangeSuffix[item.Exchange] || ('.' + item.Exchange)}`;
-      }
-      
-      if (item.Exchange === 'US') {
-        ticker = item.Code;
-      }
-      
-      // Gestisce i ticker Crypto (anche se Alpha Vantage li gestisce diversamente)
-      if (item.Exchange === 'CRYPTO') {
-        ticker = `CRYPTO:${item.Code}`;
-      }
-
-      return {
-        ticker: ticker,
-        isin: item.ISIN || undefined,
-        name: item.Name,
-        currency: item.Currency || 'USD'
-      };
-    });
-
-    // Filtra duplicati (es. stessa azienda su borse diverse)
-    const uniqueTickers = new Set<string>();
-    const uniqueSuggestions = suggestions.filter(s => {
-      if (uniqueTickers.has(s.ticker)) return false;
-      uniqueTickers.add(s.ticker);
-      return true;
-    });
-
-    return uniqueSuggestions.slice(0, 7); // Limita a 7 risultati
+    return results;
 
   } catch (e) {
     console.error(`Ricerca asset fallita: ${(e as Error).message}`);
-    return []; // Restituisce array vuoto in caso di errore
+    return [];
   }
 }
 
@@ -233,84 +189,36 @@ export function generateSyntheticPrices(ticker: string, days: number = 365 * 3, 
 }
 
 /**
- * Esegue il parsing della risposta JSON da Alpha Vantage.
- */
-function parseAlphaVantageData(data: any, currency: string): PricePoint[] {
-  const timeSeries = data['Time Series (Daily)'];
-  if (!timeSeries) {
-    console.error('Dati non trovati nella risposta di Alpha Vantage:', data);
-    if (data.Note) {
-      console.warn(`Nota da Alpha Vantage (probabilmente limite API): ${data.Note}`);
-    }
-    throw new Error('Formato dati API non valido: "Time Series (Daily)" mancante.');
-  }
-
-  const prices: PricePoint[] = [];
-
-  for (const date in timeSeries) {
-    prices.push({
-      date: date,
-      // '5. adjusted close' tiene conto di dividendi e split
-      close: Number(timeSeries[date]['5. adjusted close']),
-      currency: currency // Usa la valuta fornita (l'API non la restituisce)
-    });
-  }
-  
-  // Ordina dal più vecchio al più recente
-  prices.sort((a, b) => a.date.localeCompare(b.date));
-  return prices;
-}
-
-/**
- * Scarica i dati storici dei prezzi da Alpha Vantage.
- * Richiede la chiave VITE_ALPHA_VANTAGE_KEY nel file .env.local
+ * Scarica i dati storici dei prezzi tramite Supabase Edge Function.
  * Esegue il fallback a `generateSyntheticPrices` in caso di errore.
  */
 export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, currency: string = 'USD'): Promise<PricePoint[]> {
-  
-  const API_KEY = import.meta.env.VITE_ALPHA_VANTAGE_KEY || 'DEMO';
-  
-  // 'full' restituisce 20+ anni, 'compact' solo 100 giorni.
-  const outputSize = (days > 100) ? 'full' : 'compact';
-  
-  let apiTicker = ticker;
-  // L'API TIME_SERIES_DAILY non gestisce il prefisso CRYPTO:
+
   if (ticker.startsWith('CRYPTO:')) {
-     apiTicker = ticker.split(':')[1];
-     // Per le crypto, Alpha Vantage richiede una funzione diversa (es. DIGITAL_CURRENCY_DAILY)
-     // Per semplicità, usiamo i dati sintetici per le crypto.
-     console.warn(`Ticker Crypto ${ticker} non supportato da TIME_SERIES_DAILY, uso dati sintetici.`);
+     console.warn(`Ticker Crypto ${ticker} non supportato, uso dati sintetici.`);
      return generateSyntheticPrices(ticker, days, currency);
   }
 
-  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${apiTicker}&outputsize=${outputSize}&apikey=${API_KEY}`;
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+  const url = `${SUPABASE_URL}/functions/v1/fetch-prices?ticker=${encodeURIComponent(ticker)}&currency=${currency}`;
 
   try {
     const res = await fetch(url);
     if (!res.ok) {
-      throw new Error(`Errore server Alpha Vantage: ${res.status}`);
-    }
-    
-    const json = await res.json();
-    
-    // Gestione del limite API (5 chiamate/minuto sul piano gratuito)
-    if (json.Note) {
-      console.warn(`Limite API Alpha Vantage raggiunto (o chiave DEMO): ${json.Note}`);
-      throw new Error('Limite API Alpha Vantage raggiunto.');
+      throw new Error(`Errore Edge Function: ${res.status}`);
     }
 
-    const priceData = parseAlphaVantageData(json, currency);
-    
-    if (priceData.length === 0) {
-      throw new Error('Nessun dato parsato da Alpha Vantage.');
+    const priceData = await res.json();
+
+    if (!Array.isArray(priceData) || priceData.length === 0) {
+      throw new Error('Nessun dato ricevuto dalla Edge Function.');
     }
 
-    console.log(`Dati reali caricati per ${ticker} da Alpha Vantage.`);
+    console.log(`Dati reali caricati per ${ticker} da Edge Function.`);
     return priceData;
 
   } catch (e) {
     console.warn(`fetchPriceHistory(${ticker}) fallito, ripiego su dati sintetici. Errore: ${(e as Error).message}`);
-    // Fallback ai dati sintetici
     return generateSyntheticPrices(ticker, days, currency);
   }
 }

@@ -1,0 +1,92 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+};
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 200,
+      headers: corsHeaders,
+    });
+  }
+
+  try {
+    const url = new URL(req.url);
+    const ticker = url.searchParams.get("ticker");
+    const currency = url.searchParams.get("currency") || "USD";
+
+    if (!ticker) {
+      return new Response(
+        JSON.stringify({ error: "Ticker parameter is required" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    if (ticker.startsWith("CRYPTO:")) {
+      return new Response(
+        JSON.stringify({ error: "Crypto not supported, use synthetic data" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const ALPHA_VANTAGE_KEY = Deno.env.get("ALPHA_VANTAGE_KEY") || "demo";
+    const apiUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${ticker}&outputsize=full&apikey=${ALPHA_VANTAGE_KEY}`;
+
+    const response = await fetch(apiUrl);
+
+    if (!response.ok) {
+      throw new Error(`Alpha Vantage API returned ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (data.Note) {
+      return new Response(
+        JSON.stringify({ error: "API rate limit reached" }),
+        {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const timeSeries = data["Time Series (Daily)"];
+    if (!timeSeries) {
+      throw new Error("Invalid data format from Alpha Vantage");
+    }
+
+    const prices = [];
+    for (const date in timeSeries) {
+      prices.push({
+        date: date,
+        close: Number(timeSeries[date]["5. adjusted close"]),
+        currency: currency,
+      });
+    }
+
+    prices.sort((a, b) => a.date.localeCompare(b.date));
+
+    return new Response(JSON.stringify(prices), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    console.error("Error in fetch-prices:", error);
+    return new Response(
+      JSON.stringify({ error: (error as Error).message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  }
+});

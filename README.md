@@ -24,29 +24,23 @@ A modern portfolio backtesting and analysis webapp with real-time asset search, 
 npm install
 ```
 
-2. Configure API keys (optional, for real market data):
+2. Configure API keys for Supabase Edge Functions (optional, for real market data):
 
-Copy `.env.local.example` to `.env.local` and add your API keys:
+The app uses Supabase Edge Functions as a proxy to avoid CORS issues. To enable real market data, configure these secrets in your Supabase dashboard:
 
+- `ALPHA_VANTAGE_KEY` - Get free key at: https://www.alphavantage.co/support/#api-key
+- `EODHD_API_KEY` - Get free key at: https://eodhistoricaldata.com/register
+
+To set secrets in Supabase:
 ```bash
-cp .env.local.example .env.local
+# Using Supabase CLI (if available)
+supabase secrets set ALPHA_VANTAGE_KEY=your_key
+supabase secrets set EODHD_API_KEY=your_key
 ```
 
-Edit `.env.local`:
+Or use the Supabase Dashboard: Project Settings → Edge Functions → Secrets
 
-```env
-# Alpha Vantage - for historical price data
-# Free tier: 25 requests/day
-# Sign up: https://www.alphavantage.co/support/#api-key
-VITE_ALPHA_VANTAGE_KEY=your_alpha_vantage_key
-
-# EODHD - for asset search
-# Free tier: 20 requests/day
-# Sign up: https://eodhistoricaldata.com/register
-VITE_EODHD_API_KEY=your_eodhd_key
-```
-
-**Note**: Without API keys, the app will use synthetic data generated with geometric Brownian motion.
+**Note**: Without API keys, Edge Functions will use demo keys (limited) and the app will fallback to synthetic data.
 
 3. Run development server:
 ```bash
@@ -71,8 +65,8 @@ npm run build
 - Adjust weights anytime with inline editing
 
 ### Data Sources
-1. **With API keys**: Fetches real market data from Alpha Vantage
-2. **Without API keys**: Generates synthetic data using GBM with realistic parameters
+1. **With API keys**: Fetches real market data via Supabase Edge Functions (no CORS issues)
+2. **Without API keys**: Uses demo keys or fallback to synthetic data (GBM with realistic parameters)
 
 ### Calculations
 - **NAV Series**: Computed from historical prices with currency conversion
