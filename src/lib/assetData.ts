@@ -1,4 +1,5 @@
 import { PricePoint, AssetSuggestion } from '../types';
+import { supabase } from './supabase'; // Importa il client Supabase
 
 /**
  * Mappa ISIN -> Ticker usata SOLO come fallback per la generazione
@@ -101,21 +102,23 @@ export const EXCHANGE_RATES: Record<string, { symbol: string; rateToEUR: number 
 export async function searchAssets(query: string): Promise<AssetSuggestion[]> {
   if (!query || query.length < 2) return [];
 
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-  const url = `${SUPABASE_URL}/functions/v1/search-assets?query=${encodeURIComponent(query)}`;
-
   try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Errore Edge Function: ${res.status}`);
-    }
-    const results = await res.json();
+    // *** MODIFICA: Usa supabase.functions.invoke() ***
+    // Questo invia automaticamente le intestazioni di autenticazione (anon key)
+    const { data, error } = await supabase.functions.invoke('search-assets', {
+      queryStringParameters: { query }
+    });
 
-    if (!Array.isArray(results)) {
+    if (error) {
+      // L'errore 401 che vedevi ora sarà gestito qui
+      throw new Error(`Errore Edge Function: ${error.message}`);
+    }
+
+    if (!Array.isArray(data)) {
       return [];
     }
 
-    return results;
+    return data; // 'data' è già il risultato JSON
 
   } catch (e) {
     console.error(`Ricerca asset fallita: ${(e as Error).message}`);
@@ -199,23 +202,27 @@ export async function fetchPriceHistory(ticker: string, days: number = 365 * 5, 
      return generateSyntheticPrices(ticker, days, currency);
   }
 
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-  const url = `${SUPABASE_URL}/functions/v1/fetch-prices?ticker=${encodeURIComponent(ticker)}&currency=${currency}`;
-
   try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Errore Edge Function: ${res.status}`);
+    // *** MODIFICA: Usa supabase.functions.invoke() ***
+    const { data, error } = await supabase.functions.invoke('fetch-prices', {
+      queryStringParameters: { ticker, currency }
+    });
+
+    if (error) {
+      // Gestisce il rate limit (status 429) o altri errori
+      const errorMessage = error.message.toLowerCase();
+      if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+        throw new Error('API rate limit reached');
+      }
+      throw new Error(`Errore Edge Function: ${error.message}`);
     }
 
-    const priceData = await res.json();
-
-    if (!Array.isArray(priceData) || priceData.length === 0) {
+    if (!Array.isArray(data) || data.length === 0) {
       throw new Error('Nessun dato ricevuto dalla Edge Function.');
     }
 
     console.log(`Dati reali caricati per ${ticker} da Edge Function.`);
-    return priceData;
+    return data;
 
   } catch (e) {
     console.warn(`fetchPriceHistory(${ticker}) fallito, ripiego su dati sintetici. Errore: ${(e as Error).message}`);
