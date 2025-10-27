@@ -1,18 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // Aggiunto useCallback
 import { TrendingUp, AlertTriangle } from 'lucide-react';
 import { Asset, NavPoint, PricePoint, PortfolioMetrics } from './types';
 import PortfolioComposition from './components/PortfolioComposition';
 import PortfolioChart from './components/PortfolioChart';
 import ReturnsHistogram from './components/ReturnsHistogram';
 import MetricsCard from './components/MetricsCard';
-import { fetchPriceHistory, EXCHANGE_RATES } from './lib/assetData'; // fetchPriceHistory ora restituisce { data, isSynthetic }
+import { fetchPriceHistory, EXCHANGE_RATES } from './lib/assetData';
 import { computeNavSeries, calculateMetrics, calculateHistogram, formatCurrency } from './lib/portfolioCalculations';
 
 function uid() {
   return Math.random().toString(36).slice(2, 9);
 }
 
-// Struttura per memorizzare i dati dei prezzi E se sono sintetici
 interface PriceDataEntry {
   data: PricePoint[];
   isSynthetic: boolean;
@@ -40,17 +39,11 @@ export default function App() {
   const [usingSyntheticData, setUsingSyntheticData] = useState<boolean | null>(null);
 
   const handleAddAsset = (ticker: string, isin: string | undefined, weight: number, currency: string) => {
-    const newAsset: Asset = {
-      id: uid(),
-      ticker,
-      isin,
-      weight: Math.max(0, Math.min(100, weight)),
-      currency: currency
-    };
+    const newAsset: Asset = { id: uid(), ticker, isin, weight: Math.max(0, Math.min(100, weight)), currency };
     if (!assets.some(a => a.ticker === ticker)) {
-       setAssets(prev => [...prev, newAsset]);
+      setAssets(prev => [...prev, newAsset]);
     } else {
-       console.warn(`Asset ${ticker} già presente nel portafoglio.`);
+      console.warn(`Asset ${ticker} già presente.`);
     }
   };
 
@@ -64,94 +57,98 @@ export default function App() {
     );
   };
 
-  // *** useEffect COMPLETAMENTE RIVISTO E SEMPLIFICATO ***
+  // *** useEffect Riscritto per maggiore chiarezza e affidabilità ***
   useEffect(() => {
-    async function recalculate() {
-      // Caso base: nessun asset
+    const recalculatePortfolio = async () => {
+      // 1. Reset se non ci sono asset
       if (assets.length === 0) {
         setNavSeries([]);
         setMetrics(emptyMetrics);
         setHistogramData([]);
         setUsingSyntheticData(null);
-        setLoading(false); // Assicurati che loading sia false
+        setLoading(false);
         return;
       }
 
       setLoading(true);
-      // Reset all'inizio: assumiamo dati reali finché non troviamo prova contraria
-      let anySyntheticUsed = false;
-      // Oggetto temporaneo per accumulare i dati necessari (cache + fetch)
-      const currentCalculationData: Record<string, PriceDataEntry> = {};
+      setUsingSyntheticData(null); // Reset temporaneo durante il caricamento
+
+      // Oggetto per contenere i dati necessari per *questa* esecuzione
+      const currentRunData: Record<string, PriceDataEntry> = {};
+      let anySyntheticInThisRun = false;
+      let allDataAvailable = true;
 
       try {
-        // 1. Identifica i ticker necessari
+        // 2. Determina quali dati mancano
         const requiredTickers = assets.map(a => a.ticker).filter(Boolean);
-        const tickersToFetch: string[] = [];
-        const fetchPromises: Promise<{ ticker: string; data: PricePoint[]; isSynthetic: boolean }>[] = [];
+        const tickersToFetch = requiredTickers.filter(ticker => !priceData[ticker]);
 
-        // 2. Controlla la cache (stato `priceData`) e prepara i fetch
+        // 3. Avvia i fetch necessari
+        const fetchPromises = tickersToFetch.map(ticker => {
+          const asset = assets.find(a => a.ticker === ticker);
+          return fetchPriceHistory(ticker, 365 * 5, asset?.currency || 'USD')
+            .then(result => ({ ticker, ...result })); // result è { data, isSynthetic }
+        });
+
+        // 4. Attendi i risultati dei fetch
+        const fetchedResults = await Promise.all(fetchPromises);
+
+        // 5. Prepara l'oggetto `newlyFetchedData` per aggiornare la cache (stato `priceData`)
+        const newlyFetchedData: Record<string, PriceDataEntry> = {};
+        fetchedResults.forEach(result => {
+          newlyFetchedData[result.ticker] = { data: result.data, isSynthetic: result.isSynthetic };
+        });
+
+        // Aggiorna la cache (stato `priceData`) *prima* di procedere
+        // Usiamo l'aggiornamento funzionale per sicurezza con render rapidi
+        setPriceData(prevData => ({ ...prevData, ...newlyFetchedData }));
+
+        // 6. Costruisci l'insieme completo dei dati per questo calcolo
+        //    (usando la cache *aggiornata* implicitamente nel prossimo ciclo di render,
+        //     ma per sicurezza leggiamo dai dati appena ottenuti e dalla cache *precedente*)
         requiredTickers.forEach(ticker => {
-          if (priceData[ticker]) {
-            currentCalculationData[ticker] = priceData[ticker]; // Usa dati dalla cache
-            if (priceData[ticker].isSynthetic) {
-               // Se i dati in cache sono marcati come sintetici, aggiorna il flag
-               anySyntheticUsed = true;
+          const cachedData = priceData[ticker]; // Dati dalla cache *prima* dell'aggiornamento
+          const newData = newlyFetchedData[ticker]; // Dati *appena* scaricati
+
+          if (newData) { // Se abbiamo scaricato nuovi dati, usiamo quelli
+            currentRunData[ticker] = newData;
+            if (newData.isSynthetic) {
+              anySyntheticInThisRun = true;
+            }
+            if (!newData.data || newData.data.length === 0) {
+                 console.warn(`Fetch per ${ticker} non ha restituito dati.`);
+                 allDataAvailable = false; // Dati mancanti
+            }
+          } else if (cachedData) { // Altrimenti, usiamo i dati in cache
+            currentRunData[ticker] = cachedData;
+            if (cachedData.isSynthetic) {
+              anySyntheticInThisRun = true;
+            }
+             if (!cachedData.data || cachedData.data.length === 0) {
+                 console.warn(`Dati in cache per ${ticker} sono vuoti.`);
+                 allDataAvailable = false; // Dati mancanti
             }
           } else {
-            tickersToFetch.push(ticker); // Ticker da scaricare
+            // Questo non dovrebbe accadere se la logica sopra è corretta
+            console.error(`Errore logico: Dati per ${ticker} non trovati né in cache né fetchati.`);
+            allDataAvailable = false;
+            anySyntheticInThisRun = true; // Considera errore come sintetico
           }
         });
 
-        // 3. Esegui i fetch necessari
-        if (tickersToFetch.length > 0) {
-          tickersToFetch.forEach(ticker => {
-             const assetInfo = assets.find(a => a.ticker === ticker);
-             fetchPromises.push(
-               fetchPriceHistory(ticker, 365 * 5, assetInfo?.currency || 'USD')
-                 .then(result => ({ ticker, ...result })) // fetchPriceHistory ritorna { data, isSynthetic }
-            );
+
+        // 7. Imposta il flag definitivo per l'UI
+        setUsingSyntheticData(anySyntheticInThisRun || !allDataAvailable);
+
+        // 8. Esegui i calcoli SOLO se tutti i dati sono disponibili
+        if (allDataAvailable && assets.length > 0) { // Ricontrolla assets.length
+          // Estrai solo i PricePoint[] per le funzioni di calcolo
+          const calculationPricePoints: Record<string, PricePoint[]> = {};
+          requiredTickers.forEach(ticker => {
+            calculationPricePoints[ticker] = currentRunData[ticker].data;
           });
 
-          // Aspetta SOLO i nuovi fetch
-          const fetchedResults = await Promise.all(fetchPromises);
-
-          // 4. Aggiorna sia i dati per il calcolo attuale CHE lo stato `priceData` (cache)
-          const newlyFetchedData: Record<string, PriceDataEntry> = {};
-          fetchedResults.forEach(result => {
-            const entry = { data: result.data, isSynthetic: result.isSynthetic };
-            currentCalculationData[result.ticker] = entry; // Aggiungi ai dati per questo calcolo
-            newlyFetchedData[result.ticker] = entry;      // Prepara per aggiornare lo stato cache
-            if (result.isSynthetic) {
-              anySyntheticUsed = true; // Aggiorna flag se dati appena scaricati sono sintetici
-            }
-          });
-
-          // Aggiorna lo stato `priceData` in modo sicuro
-          setPriceData(prevData => ({ ...prevData, ...newlyFetchedData }));
-        }
-
-        // 5. Verifica finale se tutti i dati necessari sono presenti
-        let calculationPossible = true;
-        const finalPricePoints: Record<string, PricePoint[]> = {};
-        requiredTickers.forEach(ticker => {
-           const entry = currentCalculationData[ticker];
-           if (entry && entry.data && entry.data.length > 0) {
-               finalPricePoints[ticker] = entry.data;
-               // Ricontrolla se è sintetico (importante se era già in cache)
-               if(entry.isSynthetic) anySyntheticUsed = true;
-           } else {
-               console.warn(`Dati per ${ticker} non disponibili per il calcolo.`);
-               calculationPossible = false;
-               anySyntheticUsed = true; // Se mancano dati, consideriamo la simulazione non basata su dati reali completi
-           }
-        });
-
-        // 6. Aggiorna lo stato `usingSyntheticData`
-        setUsingSyntheticData(anySyntheticUsed);
-
-        // 7. Esegui i calcoli SE possibile
-        if (calculationPossible && assets.length > 0) { // Ricontrolla assets.length qui
-          const series = computeNavSeries(finalPricePoints, assets, initialCapital);
+          const series = computeNavSeries(calculationPricePoints, assets, initialCapital);
           setNavSeries(series);
 
           if (series.length >= 2) {
@@ -160,33 +157,37 @@ export default function App() {
             const histogram = calculateHistogram(series);
             setHistogramData(histogram);
           } else {
-            // Se la serie NAV è troppo corta (es. dati insufficienti), resetta
-            setNavSeries([]); // Assicura che il grafico mostri "Add assets..."
+            console.warn("Serie NAV troppo corta dopo il calcolo, possibile problema nei dati o calcoli.");
+            setNavSeries([]);
             setMetrics(emptyMetrics);
             setHistogramData([]);
+            // Non impostare usingSyntheticData qui, è già stato determinato
           }
         } else {
-          // Se il calcolo non è possibile o non ci sono più asset, resetta tutto
+          // Se i dati non sono disponibili o assets è vuoto, resetta i risultati
+          console.warn(`Calcolo saltato. allDataAvailable: ${allDataAvailable}, assets.length: ${assets.length}`);
           setNavSeries([]);
           setMetrics(emptyMetrics);
           setHistogramData([]);
-          // `usingSyntheticData` è già stato impostato correttamente sopra
         }
 
       } catch (error) {
-        console.error("Errore durante il fetch o il ricalcolo:", error);
+        console.error("Errore nel processo di ricalcolo:", error);
         setNavSeries([]);
         setMetrics(emptyMetrics);
         setHistogramData([]);
-        setUsingSyntheticData(true); // Errore -> flag sintetico a true
+        setUsingSyntheticData(true); // Errore -> flagga come sintetico
       } finally {
-        setLoading(false); // Assicurati che loading si fermi in ogni caso
+        setLoading(false); // Assicura che loading finisca
       }
-    }
+    };
 
-    recalculate();
-    // Le dipendenze rimangono corrette
-  }, [assets, initialCapital]);
+    recalculatePortfolio();
+    // Le dipendenze rimangono assets e initialCapital
+  }, [assets, initialCapital, priceData]); // Aggiunto priceData come dipendenza per ri-triggerare se la cache cambia
+                                          // Se questo causa loop, potrebbe essere necessario ottimizzare ulteriormente,
+                                          // ma proviamo prima così per garantire la coerenza.
+
 
   // Il resto del componente JSX rimane invariato...
   return (
@@ -279,9 +280,8 @@ export default function App() {
               </div>
 
                {/* *** MESSAGGIO DATI SINTETICI/REALI *** */}
-               {/* Mostra solo se ci sono asset e non sta caricando */}
                {usingSyntheticData !== null && !loading && assets.length > 0 && (
-                <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md my-4 ${ // Aggiunto my-4 per spazio
+                <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-md my-4 ${
                     usingSyntheticData
                     ? 'bg-orange-50 text-orange-700'
                     : 'bg-green-50 text-green-700'
@@ -297,13 +297,12 @@ export default function App() {
 
 
               {/* Grafico Portfolio */}
-              {loading ? ( // Mostra loading se sta caricando
+              {loading ? (
                 <div className="h-80 flex items-center justify-center">
                   <div className="text-sm text-gray-400">Loading data...</div>
                 </div>
-              ) : ( // Altrimenti mostra il grafico o il messaggio "Add assets"
+              ) : (
                 <PortfolioChart data={navSeries} currency={currency} scale={scale} />
-                 // PortfolioChart mostra già "Add assets..." se data è vuoto
               )}
             </div>
 
@@ -345,13 +344,12 @@ export default function App() {
           <p className="text-xs text-gray-500 mb-4">
             Rolling 1-year return distribution from historical data
           </p>
-          {loading ? ( // Mostra loading se sta caricando
+          {loading ? (
             <div className="h-64 flex items-center justify-center">
               <div className="text-sm text-gray-400">Loading data...</div>
             </div>
-          ) : ( // Altrimenti mostra l'istogramma o il messaggio di dati insufficienti
+          ) : (
             <ReturnsHistogram data={histogramData} />
-            // ReturnsHistogram mostra già un messaggio se data è vuoto
           )}
         </div>
 
