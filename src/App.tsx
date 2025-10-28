@@ -336,7 +336,7 @@ export default function App() {
         </div>
 
         <footer className="mt-8 text-center text-xs text-gray-500">
-          Dati forniti da Alpha Vantage & EOD Historical Data • Solo dati reali di mercato
+          Dati forniti da Alpha Vantage & EOD Historical Data
         </footer>
       </main>
     </div>
